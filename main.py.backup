@@ -1,0 +1,1073 @@
+#!/usr/bin/env python3
+"""
+AudioTransLocal - Audio transcription application with onboarding
+"""
+
+import sys
+import os
+import json
+import hashlib
+import threading
+import requests
+from pathlib import Path
+import keyring
+from PySide6.QtWidgets import (QApplication, QLabel, QWidget, QVBoxLayout, 
+                            QDialog, QPushButton, QHBoxLayout, QFileDialog,
+                            QMessageBox, QTextEdit, QMainWindow, QMenuBar,
+                            QLineEdit, QFormLayout, QGroupBox,
+                            QTabWidget, QComboBox, QProgressBar)
+from PySide6.QtCore import Qt, QSettings, Signal, QThread
+from PySide6.QtGui import QFont, QKeySequence, QAction
+
+# Import centralized styling and validation
+from styles import apply_style, get_font
+from validation import SettingsValidator, ValidationResult
+from macos_bookmarks import BookmarkAwareSettings
+from voice_memo_view import VoiceMemoView
+
+
+class WelcomeDialog(QDialog):
+    """Welcome dialog for first launch and folder selection"""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.selected_folder = None
+        self.setup_ui()
+        
+    def setup_ui(self):
+        """Setup the welcome dialog UI"""
+        self.setWindowTitle("Welcome to AudioTransLocal")
+        self.setModal(True)
+        self.setFixedSize(500, 350)
+        
+        # Main layout
+        layout = QVBoxLayout()
+        
+        # Welcome title
+        title = QLabel("Welcome to AudioTransLocal")
+        title.setAlignment(Qt.AlignCenter)
+        title.setFont(get_font('title_medium'))
+        apply_style(title, 'welcome_title')
+        
+        # Welcome message
+        message = QTextEdit()
+        message.setReadOnly(True)
+        message.setHtml("""
+        <div style="font-family: Arial; font-size: 14px; line-height: 1.6;">
+            <p><strong>To get started, we need access to your audio files.</strong></p>
+            <p>AudioTransLocal helps you transcribe your voice memos and audio recordings. 
+            To do this effectively, please select the folder where your audio files are stored.</p>
+            <p><strong>Common locations:</strong></p>
+            <ul>
+                <li>Voice Memos: <code>~/Library/Application Support/com.apple.voicememos/Recordings</code></li>
+                <li>Downloads folder: <code>~/Downloads</code></li>
+                <li>Custom audio folder of your choice</li>
+            </ul>
+            <p><em>Note: You can change this folder location later in Settings.</em></p>
+        </div>
+        """)
+        message.setMaximumHeight(180)
+        
+        # Buttons layout
+        button_layout = QHBoxLayout()
+        
+        # Quit button
+        quit_btn = QPushButton("Quit")
+        apply_style(quit_btn, 'button_danger')
+        quit_btn.clicked.connect(self.quit_application)
+        
+        # Select folder button
+        select_btn = QPushButton("Select Folder...")
+        apply_style(select_btn, 'button_primary')
+        select_btn.clicked.connect(self.select_folder)
+        select_btn.setDefault(True)  # Make this the default button
+        
+        # Add buttons to layout
+        button_layout.addWidget(quit_btn)
+        button_layout.addStretch()
+        button_layout.addWidget(select_btn)
+        
+        # Add all components to main layout
+        layout.addWidget(title)
+        layout.addWidget(message)
+        layout.addLayout(button_layout)
+        
+        self.setLayout(layout)
+        
+    def select_folder(self):
+        """Handle folder selection with validation"""
+        # Get suggested default path (Voice Memos location)
+        voice_memos_path = os.path.expanduser("~/Library/Group Containers/group.com.apple.VoiceMemos.shared/Recordings")
+        downloads_path = os.path.expanduser("~/Downloads")
+        
+        # Use Voice Memos path if it exists, otherwise Downloads, otherwise home
+        if os.path.exists(voice_memos_path):
+            default_path = voice_memos_path
+        elif os.path.exists(downloads_path):
+            default_path = downloads_path
+        else:
+            default_path = os.path.expanduser("~")
+        
+        # Open folder selection dialog
+        folder_path = QFileDialog.getExistingDirectory(
+            self,
+            "Select Audio Files Folder",
+            default_path,
+            QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks
+        )
+        
+        if folder_path:
+            # Validate the selected folder
+            validation_result = SettingsValidator.validate_audio_folder(folder_path)
+            
+            if validation_result.is_valid:
+                # Show warning if Voice Memos database not found
+                if validation_result.has_warnings():
+                    reply = QMessageBox.warning(
+                        self,
+                        "Folder Validation Warning",
+                        validation_result.get_warning_message() + "\n\nDo you want to continue with this folder?",
+                        QMessageBox.Yes | QMessageBox.No,
+                        QMessageBox.Yes
+                    )
+                    
+                    if reply != QMessageBox.Yes:
+                        return  # User chose not to continue
+                
+                self.selected_folder = validation_result.data['folder_path']
+                self.accept()  # Close dialog with success
+            else:
+                # Show validation errors
+                QMessageBox.critical(
+                    self,
+                    "Invalid Folder Selection",
+                    f"The selected folder is not valid:\n\n{validation_result.get_error_message()}\n\nPlease select a different folder."
+                )
+        # If cancelled or invalid, dialog stays open
+        
+    def quit_application(self):
+        """Handle quit button"""
+        self.reject()  # Close dialog with cancel
+        QApplication.quit()
+
+
+class CredentialsManager:
+    """Secure credentials management using macOS Keychain"""
+    
+    SERVICE_NAME = "com.audiotranslocal.app"
+    N8N_API_KEY_ACCOUNT = "n8n_api_key"
+    
+    @classmethod
+    def get_n8n_api_key(cls):
+        """Retrieve n8n API key from Keychain"""
+        try:
+            api_key = keyring.get_password(cls.SERVICE_NAME, cls.N8N_API_KEY_ACCOUNT)
+            return api_key if api_key else ""
+        except Exception as e:
+            print(f"Error retrieving API key from Keychain: {e}")
+            return ""
+    
+    @classmethod
+    def set_n8n_api_key(cls, api_key):
+        """Store n8n API key in Keychain"""
+        try:
+            if api_key.strip():
+                keyring.set_password(cls.SERVICE_NAME, cls.N8N_API_KEY_ACCOUNT, api_key.strip())
+                return True
+            else:
+                # If empty key, delete from keychain
+                cls.delete_n8n_api_key()
+                return True
+        except Exception as e:
+            print(f"Error storing API key in Keychain: {e}")
+            return False
+    
+    @classmethod
+    def delete_n8n_api_key(cls):
+        """Delete n8n API key from Keychain"""
+        try:
+            keyring.delete_password(cls.SERVICE_NAME, cls.N8N_API_KEY_ACCOUNT)
+            return True
+        except keyring.errors.PasswordDeleteError:
+            # Key doesn't exist, which is fine
+            return True
+        except Exception as e:
+            print(f"Error deleting API key from Keychain: {e}")
+            return False
+
+
+class ModelDownloadWorker(QThread):
+    """Worker thread for downloading Whisper models"""
+    
+    # Signals for progress and completion
+    progress_updated = Signal(int)  # Progress percentage
+    download_completed = Signal(str, bool, str)  # model_id, success, message
+    
+    def __init__(self, model_id, model_info, models_dir):
+        super().__init__()
+        self.model_id = model_id
+        self.model_info = model_info
+        self.models_dir = models_dir
+        self.should_stop = False
+        
+    def run(self):
+        """Download the model in a background thread"""
+        try:
+            # Create models directory if it doesn't exist
+            os.makedirs(self.models_dir, exist_ok=True)
+            
+            file_path = os.path.join(self.models_dir, self.model_info['filename'])
+            temp_file_path = file_path + '.tmp'
+            
+            # Download the file
+            response = requests.get(self.model_info['download_url'], stream=True)
+            response.raise_for_status()
+            
+            total_size = int(response.headers.get('content-length', 0))
+            downloaded_size = 0
+            
+            with open(temp_file_path, 'wb') as file:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if self.should_stop:
+                        os.remove(temp_file_path)
+                        return
+                    
+                    if chunk:
+                        file.write(chunk)
+                        downloaded_size += len(chunk)
+                        
+                        if total_size > 0:
+                            progress = int((downloaded_size / total_size) * 100)
+                            self.progress_updated.emit(progress)
+            
+            # Verify checksum for cryptographic integrity proof
+            if self.verify_checksum(temp_file_path, self.model_info['sha256']):
+                # Move temp file to final location
+                os.rename(temp_file_path, file_path)
+                self.download_completed.emit(self.model_id, True, "Download completed successfully")
+            else:
+                # Remove corrupt file
+                os.remove(temp_file_path)
+                self.download_completed.emit(self.model_id, False, "Downloaded file checksum verification failed. The file may be corrupted or incomplete.")
+                
+        except requests.exceptions.RequestException as e:
+            self.download_completed.emit(self.model_id, False, f"Network error: {str(e)}")
+        except Exception as e:
+            self.download_completed.emit(self.model_id, False, f"Download error: {str(e)}")
+    
+    def verify_file_size(self, file_path, expected_size_mb):
+        """Verify the file size matches expected size (with 5% tolerance)"""
+        try:
+            file_size = os.path.getsize(file_path)
+            expected_size = expected_size_mb * 1024 * 1024
+            # Allow 5% variance in file size
+            tolerance = expected_size * 0.05
+            return abs(file_size - expected_size) <= tolerance
+        except Exception:
+            return False
+    
+    def verify_checksum(self, file_path, expected_sha256):
+        """Verify the SHA256 checksum of the downloaded file"""
+        try:
+            sha256_hash = hashlib.sha256()
+            with open(file_path, "rb") as f:
+                for chunk in iter(lambda: f.read(4096), b""):
+                    sha256_hash.update(chunk)
+            
+            calculated_hash = sha256_hash.hexdigest()
+            return calculated_hash.lower() == expected_sha256.lower()
+        except Exception:
+            return False
+    
+    def stop_download(self):
+        """Stop the download"""
+        self.should_stop = True
+
+
+class WhisperModelManager:
+    """Manager for Whisper model configuration and downloads"""
+    
+    def __init__(self):
+        self.models_config = self.load_models_config()
+        self.models_dir = self.get_models_directory()
+        
+    def load_models_config(self):
+        """Load the Whisper models configuration"""
+        try:
+            config_path = os.path.join(os.path.dirname(__file__), 'whisper_models.json')
+            with open(config_path, 'r') as f:
+                return json.load(f)['whisper_models']
+        except Exception as e:
+            print(f"Error loading models config: {e}")
+            return {}
+    
+    def get_models_directory(self):
+        """Get the models storage directory"""
+        # Use Application Support directory
+        app_support = os.path.expanduser("~/Library/Application Support")
+        models_dir = os.path.join(app_support, "AudioTransLocal", "models")
+        os.makedirs(models_dir, exist_ok=True)
+        return models_dir
+    
+    def is_model_downloaded(self, model_id):
+        """Check if a model is already downloaded"""
+        if model_id not in self.models_config:
+            return False
+        
+        filename = self.models_config[model_id]['filename']
+        file_path = os.path.join(self.models_dir, filename)
+        
+        if not os.path.exists(file_path):
+            return False
+        
+        # Verify file integrity by checking size (basic check)
+        try:
+            file_size = os.path.getsize(file_path)
+            expected_size = self.models_config[model_id]['size_mb'] * 1024 * 1024
+            # Allow 5% variance in file size
+            return abs(file_size - expected_size) <= (expected_size * 0.05)
+        except Exception:
+            return False
+    
+    def get_model_status(self, model_id):
+        """Get the status string for a model"""
+        if model_id not in self.models_config:
+            return "Status: Unknown model"
+        
+        model_info = self.models_config[model_id]
+        
+        if self.is_model_downloaded(model_id):
+            return f"Status: Downloaded • Size: {model_info['size_mb']} MB"
+        else:
+            return f"Status: Not Downloaded • Size: {model_info['size_mb']} MB"
+    
+    def get_available_models(self):
+        """Get list of available models for dropdown"""
+        return [(model_id, info['display_name']) for model_id, info in self.models_config.items()]
+
+
+class PreferencesWindow(QDialog):
+    """Preferences window for application settings"""
+    
+    # Signal emitted when folder path is changed
+    folder_changed = Signal(str)
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.settings = QSettings("AudioTransLocal", "AudioTransLocal")
+        self.bookmark_settings = BookmarkAwareSettings(self.settings)
+        self.model_manager = WhisperModelManager()
+        self.download_worker = None
+        self.setup_ui()
+        self.load_settings()
+        
+    def setup_ui(self):
+        """Setup the preferences window UI"""
+        self.setWindowTitle("AudioTransLocal Preferences")
+        self.setModal(False)  # Non-modal window
+        self.setFixedSize(800, 550)  # Made taller to accommodate extra spacing
+        
+        # Main layout
+        main_layout = QVBoxLayout()
+        main_layout.setContentsMargins(20, 15, 20, 15)  # Add margins around the entire dialog
+        main_layout.setSpacing(15)  # Add spacing between major components
+        
+        # Create tab widget (for future expandability)
+        tab_widget = QTabWidget()
+        
+        # General tab
+        general_tab = QWidget()
+        general_layout = QVBoxLayout()
+        general_layout.setContentsMargins(15, 15, 15, 15)  # Add margins inside the tab
+        general_layout.setSpacing(15)  # Add spacing between groups
+        
+        # Folder configuration group
+        folder_group = QGroupBox("Audio Files Folder")
+        folder_layout = QFormLayout()
+        folder_layout.setLabelAlignment(Qt.AlignRight)  # Right-align labels
+        
+        # Current folder path (read-only)
+        self.folder_path_field = QLineEdit()
+        self.folder_path_field.setReadOnly(True)
+        apply_style(self.folder_path_field, 'input_readonly')
+        
+        # Change folder button
+        change_folder_btn = QPushButton("Change...")
+        apply_style(change_folder_btn, 'button_primary')
+        change_folder_btn.clicked.connect(self.change_folder)
+        
+        # Layout for folder path and button
+        folder_path_layout = QHBoxLayout()
+        folder_path_layout.addWidget(self.folder_path_field, 3)  # Give more space to path field
+        folder_path_layout.addWidget(change_folder_btn)
+        folder_path_layout.setSpacing(8)  # Add spacing
+        
+        folder_layout.addRow("Current folder:", folder_path_layout)
+        folder_layout.setVerticalSpacing(10)  # Add vertical spacing
+        
+        # Add help text
+        help_text = QLabel("Select the folder containing your audio files (Voice Memos, recordings, etc.)")
+        apply_style(help_text, 'help_text')
+        help_text.setWordWrap(True)
+        folder_layout.addRow(help_text)
+        
+        folder_group.setLayout(folder_layout)
+        general_layout.addWidget(folder_group)
+        general_layout.addSpacing(20)  # Add space between groups
+        
+        # API Configuration group
+        api_group = QGroupBox("API Configuration")
+        api_layout = QFormLayout()
+        api_layout.setLabelAlignment(Qt.AlignRight)  # Right-align labels
+        
+        # n8n API Key (secure text field)
+        self.api_key_field = QLineEdit()
+        self.api_key_field.setEchoMode(QLineEdit.Password)  # Secure text field (bullets)
+        self.api_key_field.setPlaceholderText("Enter your n8n API key...")
+        apply_style(self.api_key_field, 'input_password')
+        
+        # Save button for API key
+        save_api_key_btn = QPushButton("Save")
+        apply_style(save_api_key_btn, 'button_success')
+        save_api_key_btn.clicked.connect(self.save_api_key)
+        
+        # Clear button for API key
+        clear_api_key_btn = QPushButton("Clear")
+        apply_style(clear_api_key_btn, 'button_danger')
+        clear_api_key_btn.clicked.connect(self.clear_api_key)
+        
+        # Show/Hide API key button
+        self.show_api_key_btn = QPushButton("Show")
+        apply_style(self.show_api_key_btn, 'button_secondary')
+        self.show_api_key_btn.clicked.connect(self.toggle_api_key_visibility)
+        
+        # Layout for API key field and buttons
+        api_key_layout = QHBoxLayout()
+        api_key_layout.addWidget(self.api_key_field, 3)  # Give more space to text field
+        api_key_layout.addWidget(self.show_api_key_btn)
+        api_key_layout.addWidget(save_api_key_btn)
+        api_key_layout.addWidget(clear_api_key_btn)
+        api_key_layout.setSpacing(8)  # Add spacing between buttons
+        
+        api_layout.addRow("n8n API Key:", api_key_layout)
+        api_layout.setVerticalSpacing(10)  # Add vertical spacing
+        
+        # Add API key help text
+        api_help_text = QLabel("Your n8n API key is stored securely in the macOS Keychain")
+        apply_style(api_help_text, 'help_text')
+        api_help_text.setWordWrap(True)
+        api_layout.addRow(api_help_text)
+        
+        api_group.setLayout(api_layout)
+        general_layout.addWidget(api_group)
+        
+        general_layout.addSpacing(20)  # Add space between groups
+        
+        # Whisper Model Management group
+        model_group = QGroupBox("Whisper AI Model")
+        model_layout = QFormLayout()
+        model_layout.setLabelAlignment(Qt.AlignRight)
+        model_layout.setSpacing(10)  # Consistent spacing
+
+        # --- Create Widgets ---
+        
+        # Model selection dropdown
+        self.model_dropdown = QComboBox()
+        apply_style(self.model_dropdown, 'dropdown')
+        self.model_dropdown.currentTextChanged.connect(self.on_model_selection_changed)
+        
+        # Download button
+        self.download_button = QPushButton("Download")
+        apply_style(self.download_button, 'button_info')
+        self.download_button.clicked.connect(self.download_model)
+        
+        # Cancel download button (initially hidden)
+        self.cancel_button = QPushButton("Cancel")
+        apply_style(self.cancel_button, 'button_danger')
+        self.cancel_button.clicked.connect(self.cancel_download)
+        self.cancel_button.hide()
+        
+        # Model status label
+        self.model_status_label = QLabel("Status: Loading...")
+        # Don't apply any styling - use pure native appearance
+        self.model_status_label.setWordWrap(False)  # Don't wrap text
+        self.model_status_label.setMinimumWidth(200)  # Ensure enough space
+        
+        # Progress bar (initially hidden)
+        self.progress_bar = QProgressBar()
+        apply_style(self.progress_bar, 'progress_bar')
+        self.progress_bar.hide()
+        
+        # Help text
+        model_description = QLabel(
+            "Select and download a Whisper AI model for transcription. "
+            "Smaller models are faster but less accurate. Larger models provide better accuracy but take longer to process."
+        )
+        apply_style(model_description, 'help_text')
+        model_description.setWordWrap(True)
+        
+        # --- Arrange Widgets in Layouts ---
+
+        # Row 1: Dropdown and action buttons (Download/Cancel)
+        controls_layout = QHBoxLayout()
+        controls_layout.addWidget(self.model_dropdown, 1)  # Use stretch factor
+        controls_layout.addWidget(self.download_button)
+        controls_layout.addWidget(self.cancel_button)
+        
+        # Row 2: Status label and progress bar
+        status_layout = QHBoxLayout()
+        status_layout.addWidget(self.model_status_label, 1)  # Use stretch factor
+        status_layout.addWidget(self.progress_bar)
+        
+        # --- Add Rows to Form ---
+        
+        model_layout.addRow("Select Model:", controls_layout)
+        model_layout.addRow("", status_layout)  # Aligns under the controls
+        model_layout.addRow(model_description)
+
+        model_group.setLayout(model_layout)
+        general_layout.addWidget(model_group)
+        
+        general_layout.addStretch()
+        
+        general_tab.setLayout(general_layout)
+        tab_widget.addTab(general_tab, "General")
+        
+        # Close button
+        button_layout = QHBoxLayout()
+        close_btn = QPushButton("Close")
+        apply_style(close_btn, 'button_secondary')
+        close_btn.clicked.connect(self.close)
+        button_layout.addStretch()
+        button_layout.addWidget(close_btn)
+        
+        # Add components to main layout
+        main_layout.addWidget(tab_widget)
+        main_layout.addLayout(button_layout)
+        
+        self.setLayout(main_layout)
+        
+    def load_settings(self):
+        """Load current settings into the UI"""
+        # Load folder path
+        folder_path = self.settings.value("audio_folder_path", "")
+        self.folder_path_field.setText(folder_path)
+        
+        # Load API key from Keychain
+        api_key = CredentialsManager.get_n8n_api_key()
+        self.api_key_field.setText(api_key)
+        
+        # Load Whisper models
+        self.load_whisper_models()
+        
+    def load_whisper_models(self):
+        """Load Whisper models into the dropdown"""
+        self.model_dropdown.clear()
+        
+        # Add models to dropdown
+        for model_id, display_name in self.model_manager.get_available_models():
+            self.model_dropdown.addItem(display_name, model_id)  # Store model_id as data
+        
+        # Load selected model from settings
+        selected_model = self.settings.value("selected_whisper_model", "tiny.en")
+        
+        # Find and select the saved model
+        for i in range(self.model_dropdown.count()):
+            if self.model_dropdown.itemData(i) == selected_model:
+                self.model_dropdown.setCurrentIndex(i)
+                break
+        
+        # Update status for initially selected model
+        self.update_model_status()
+    
+    def on_model_selection_changed(self):
+        """Handle model selection change"""
+        self.update_model_status()
+        
+        # Save selected model to settings
+        current_model_id = self.model_dropdown.currentData()
+        if current_model_id:
+            self.settings.setValue("selected_whisper_model", current_model_id)
+            self.settings.sync()
+    
+    def update_model_status(self):
+        """Update the model status label and download button"""
+        current_model_id = self.model_dropdown.currentData()
+        if not current_model_id:
+            return
+        
+        # Update status label
+        status = self.model_manager.get_model_status(current_model_id)
+        self.model_status_label.setText(status)
+        self.model_status_label.show()  # Ensure visibility
+        
+        # Update download button state
+        is_downloaded = self.model_manager.is_model_downloaded(current_model_id)
+        self.download_button.setEnabled(not is_downloaded and not self.download_worker)
+        
+        if is_downloaded:
+            self.download_button.setText("Downloaded")
+        else:
+            self.download_button.setText("Download")
+    
+    def download_model(self):
+        """Start downloading the selected model"""
+        current_model_id = self.model_dropdown.currentData()
+        if not current_model_id or current_model_id not in self.model_manager.models_config:
+            return
+        
+        model_info = self.model_manager.models_config[current_model_id]
+        
+        # Confirm download for large models
+        if model_info['size_mb'] > 500:
+            reply = QMessageBox.question(
+                self,
+                "Download Large Model",
+                f"You are about to download {model_info['display_name']} ({model_info['size_mb']} MB).\n\n"
+                f"This may take several minutes depending on your internet connection.\n\n"
+                f"Do you want to continue?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            
+            if reply != QMessageBox.Yes:
+                return
+        
+        # Start download
+        self.start_download(current_model_id, model_info)
+    
+    def start_download(self, model_id, model_info):
+        """Start the download process"""
+        # Update UI state
+        self.model_dropdown.setEnabled(False)
+        self.download_button.hide()
+        self.cancel_button.show()
+        self.progress_bar.show()
+        self.progress_bar.setValue(0)
+        
+        # Start download worker
+        self.download_worker = ModelDownloadWorker(
+            model_id, 
+            model_info, 
+            self.model_manager.models_dir
+        )
+        
+        # Connect signals
+        self.download_worker.progress_updated.connect(self.update_download_progress)
+        self.download_worker.download_completed.connect(self.download_finished)
+        
+        # Start download
+        self.download_worker.start()
+    
+    def update_download_progress(self, progress):
+        """Update the progress bar"""
+        self.progress_bar.setValue(progress)
+    
+    def download_finished(self, model_id, success, message):
+        """Handle download completion"""
+        # Clean up worker
+        if self.download_worker:
+            self.download_worker.wait()
+            self.download_worker = None
+        
+        # Reset UI state
+        self.model_dropdown.setEnabled(True)
+        self.cancel_button.hide()
+        self.download_button.show()
+        self.progress_bar.hide()
+        
+        # Update model status
+        self.update_model_status()
+        
+        # Show result message
+        if success:
+            QMessageBox.information(
+                self,
+                "Download Complete",
+                f"Successfully downloaded {self.model_dropdown.currentText()}!\n\n"
+                f"The model is now ready for use."
+            )
+        else:
+            QMessageBox.critical(
+                self,
+                "Download Failed",
+                f"Failed to download {self.model_dropdown.currentText()}.\n\n"
+                f"Error: {message}\n\n"
+                f"Please check your internet connection and try again."
+            )
+    
+    def cancel_download(self):
+        """Cancel the current download"""
+        if self.download_worker:
+            reply = QMessageBox.question(
+                self,
+                "Cancel Download",
+                "Are you sure you want to cancel the download?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            
+            if reply == QMessageBox.Yes:
+                self.download_worker.stop_download()
+                self.download_worker.wait()
+                self.download_worker = None
+                
+                # Reset UI
+                self.model_dropdown.setEnabled(True)
+                self.cancel_button.hide()
+                self.download_button.show()
+                self.progress_bar.hide()
+                self.update_model_status()
+        
+    def save_api_key(self):
+        """Save API key to Keychain with validation"""
+        api_key = self.api_key_field.text().strip()
+        
+        # Validate API key
+        validation_result = SettingsValidator.validate_api_settings(api_key=api_key)
+        
+        if validation_result.is_valid:
+            # Save the validated API key
+            validated_key = validation_result.data.get('api_key')
+            
+            if CredentialsManager.set_n8n_api_key(validated_key):
+                message = "Your n8n API key has been securely saved to the macOS Keychain."
+                
+                # Add validation warnings if any
+                if validation_result.has_warnings():
+                    message += f"\n\nNote: {validation_result.get_warning_message()}"
+                
+                if validated_key:
+                    QMessageBox.information(
+                        self,
+                        "API Key Saved",
+                        message
+                    )
+                else:
+                    QMessageBox.information(
+                        self,
+                        "API Key Cleared",
+                        "Your n8n API key has been removed from the macOS Keychain."
+                    )
+            else:
+                QMessageBox.critical(
+                    self,
+                    "Error",
+                    "Failed to save API key to Keychain. Please try again."
+                )
+        else:
+            # Show validation errors
+            QMessageBox.critical(
+                self,
+                "Invalid API Key",
+                f"The API key is not valid:\n\n{validation_result.get_error_message()}\n\nPlease correct the API key and try again."
+            )
+    
+    def clear_api_key(self):
+        """Clear API key from both field and Keychain"""
+        reply = QMessageBox.question(
+            self,
+            "Clear API Key",
+            "Are you sure you want to clear your n8n API key?\nThis will remove it from the secure Keychain storage.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            self.api_key_field.clear()
+            if CredentialsManager.delete_n8n_api_key():
+                QMessageBox.information(
+                    self,
+                    "API Key Cleared",
+                    "Your n8n API key has been removed from the macOS Keychain."
+                )
+            else:
+                QMessageBox.warning(
+                    self,
+                    "Warning",
+                    "API key cleared from field, but there was an issue removing it from Keychain."
+                )
+    
+    def toggle_api_key_visibility(self):
+        """Toggle between showing and hiding the API key"""
+        if self.api_key_field.echoMode() == QLineEdit.Password:
+            # Currently hidden, show it
+            self.api_key_field.setEchoMode(QLineEdit.Normal)
+            self.show_api_key_btn.setText("Hide")
+        else:
+            # Currently shown, hide it
+            self.api_key_field.setEchoMode(QLineEdit.Password)
+            self.show_api_key_btn.setText("Show")
+        
+    def change_folder(self):
+        """Handle folder change button click with validation"""
+        current_path = self.settings.value("audio_folder_path", "")
+        
+        # Get suggested default path
+        voice_memos_path = os.path.expanduser("~/Library/Application Support/com.apple.voicememos/Recordings")
+        downloads_path = os.path.expanduser("~/Downloads")
+        
+        # Use current path if exists, otherwise smart defaults
+        if current_path and os.path.exists(current_path):
+            default_path = current_path
+        elif os.path.exists(voice_memos_path):
+            default_path = voice_memos_path
+        elif os.path.exists(downloads_path):
+            default_path = downloads_path
+        else:
+            default_path = os.path.expanduser("~")
+        
+        # Open folder selection dialog
+        folder_path = QFileDialog.getExistingDirectory(
+            self,
+            "Select Audio Files Folder",
+            default_path,
+            QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks
+        )
+        
+        if folder_path:
+            # Validate the selected folder
+            validation_result = SettingsValidator.validate_audio_folder(folder_path)
+            
+            if validation_result.is_valid:
+                # Show warning if Voice Memos database not found
+                if validation_result.has_warnings():
+                    reply = QMessageBox.warning(
+                        self,
+                        "Folder Validation Warning",
+                        validation_result.get_warning_message() + "\n\nDo you want to continue with this folder?",
+                        QMessageBox.Yes | QMessageBox.No,
+                        QMessageBox.Yes
+                    )
+                    
+                    if reply != QMessageBox.Yes:
+                        return  # User chose not to continue
+                
+                # Update settings with validated path
+                validated_path = validation_result.data['folder_path']
+                self.settings.setValue("audio_folder_path", validated_path)
+                self.settings.sync()
+                
+                # Update UI
+                self.folder_path_field.setText(validated_path)
+                
+                # Emit signal to notify main window
+                self.folder_changed.emit(validated_path)
+                
+                # Show confirmation
+                message = f"Audio folder updated to:\n{validated_path}"
+                if validation_result.has_warnings():
+                    message += f"\n\nNote: {validation_result.get_warning_message()}"
+                
+                QMessageBox.information(
+                    self,
+                    "Folder Updated",
+                    message
+                )
+            else:
+                # Show validation errors
+                QMessageBox.critical(
+                    self,
+                    "Invalid Folder Selection",
+                    f"The selected folder is not valid:\n\n{validation_result.get_error_message()}\n\nPlease select a different folder."
+                )
+
+
+class MainWindow(QMainWindow):
+    """Main application window with menu bar"""
+    
+    def __init__(self, audio_folder_path):
+        super().__init__()
+        self.audio_folder_path = audio_folder_path
+        self.preferences_window = None
+        self.setup_ui()
+        self.create_menu_bar()
+        
+    def setup_ui(self):
+        """Setup the main window UI"""
+        self.setWindowTitle("AudioTransLocal")
+        self.setGeometry(100, 100, 1200, 800)  # Larger window for Voice Memo view
+        
+        # Central widget with no spacing
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        
+        # Main layout with minimal spacing
+        layout = QVBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)  # No margins for full-screen view
+        layout.setSpacing(0)  # No spacing between elements
+        
+        # Add Voice Memo View as the main content (fills entire window)
+        self.voice_memo_view = VoiceMemoView()
+        layout.addWidget(self.voice_memo_view)
+        
+        central_widget.setLayout(layout)
+        
+        # Auto-load Voice Memos if we have a valid folder path
+        self._load_voice_memos()
+        
+    def create_menu_bar(self):
+        """Create the application menu bar"""
+        menubar = self.menuBar()
+        
+        # Application menu (typically the app name on macOS)
+        app_menu = menubar.addMenu("AudioTransLocal")
+        
+        # Preferences action
+        preferences_action = QAction("Preferences...", self)
+        preferences_action.setShortcut(QKeySequence("Ctrl+,"))  # ⌘, on Mac
+        preferences_action.triggered.connect(self.show_preferences)
+        app_menu.addAction(preferences_action)
+        
+        app_menu.addSeparator()
+        
+        # Quit action
+        quit_action = QAction("Quit AudioTransLocal", self)
+        quit_action.setShortcut(QKeySequence("Ctrl+Q"))  # ⌘Q on Mac
+        quit_action.triggered.connect(self.close)
+        app_menu.addAction(quit_action)
+        
+        # Voice Memos menu
+        voice_menu = menubar.addMenu("Voice Memos")
+        
+        # Refresh action
+        refresh_action = QAction("Refresh Voice Memos", self)
+        refresh_action.setShortcut(QKeySequence("Ctrl+R"))  # ⌘R on Mac
+        refresh_action.triggered.connect(self._refresh_voice_memos)
+        voice_menu.addAction(refresh_action)
+        
+        # Transcribe selected action
+        transcribe_action = QAction("Transcribe Selected", self)
+        transcribe_action.setShortcut(QKeySequence("Ctrl+T"))  # ⌘T on Mac
+        transcribe_action.triggered.connect(self._transcribe_selected)
+        voice_menu.addAction(transcribe_action)
+    
+    def _refresh_voice_memos(self):
+        """Refresh the Voice Memos list"""
+        if hasattr(self, 'voice_memo_view'):
+            self.voice_memo_view.refresh_memos()
+    
+    def _transcribe_selected(self):
+        """Transcribe the currently selected Voice Memo"""
+        if hasattr(self, 'voice_memo_view'):
+            selected_memo = self.voice_memo_view.get_selected_memo()
+            if selected_memo:
+                # TODO: Implement transcription functionality
+                QMessageBox.information(
+                    self, 
+                    "Transcription", 
+                    f"Transcription will be implemented for:\n{selected_memo.get_display_title()}"
+                )
+            else:
+                QMessageBox.information(
+                    self, 
+                    "No Selection", 
+                    "Please select a Voice Memo to transcribe."
+                )
+        
+    def show_preferences(self):
+        """Show the preferences window"""
+        if self.preferences_window is None:
+            self.preferences_window = PreferencesWindow(self)
+            # Connect the folder changed signal
+            self.preferences_window.folder_changed.connect(self.update_folder_display)
+        
+        # Show the preferences window (non-modal)
+        self.preferences_window.show()
+        self.preferences_window.raise_()  # Bring to front
+        self.preferences_window.activateWindow()  # Activate window
+        
+    def _load_voice_memos(self):
+        """Load Voice Memos from the configured audio folder"""
+        if not self.audio_folder_path:
+            return
+        
+        # Check for Voice Memos database
+        folder_path = Path(self.audio_folder_path)
+        db_path = folder_path / "CloudRecordings.db"
+        
+        if db_path.exists():
+            print(f"📂 Loading Voice Memos from: {db_path}")
+            self.voice_memo_view.load_voice_memos(str(db_path))
+        else:
+            # Check if this is the actual Voice Memos folder
+            voice_memos_path = Path.home() / "Library/Group Containers/group.com.apple.VoiceMemos.shared/Recordings"
+            if voice_memos_path.exists() and (voice_memos_path / "CloudRecordings.db").exists():
+                print(f"📂 Loading Voice Memos from system location: {voice_memos_path}")
+                self.voice_memo_view.load_voice_memos(str(voice_memos_path / "CloudRecordings.db"))
+    
+    def update_folder_display(self, folder_path):
+        """Update the folder display and reload Voice Memos"""
+        self.audio_folder_path = folder_path
+        self._load_voice_memos()  # Reload Voice Memos from new folder
+
+
+class AudioTransLocalApp:
+    """Main application controller"""
+    
+    def __init__(self):
+        self.app = QApplication(sys.argv)
+        self.settings = QSettings("AudioTransLocal", "AudioTransLocal")
+        self.bookmark_settings = BookmarkAwareSettings(self.settings)
+        self.main_window = None
+        
+    def is_first_launch(self):
+        """Check if this is the first launch"""
+        return not self.settings.contains("audio_folder_path") and not self.settings.contains("audio_folder_bookmark")
+        
+    def get_audio_folder_path(self):
+        """Get the stored audio folder path using security-scoped bookmarks"""
+        return self.bookmark_settings.get_folder_path("audio_folder")
+        
+    def set_audio_folder_path(self, path):
+        """Store the audio folder path with security-scoped bookmark"""
+        success = self.bookmark_settings.store_folder_path("audio_folder", path)
+        if success:
+            print(f"✅ Successfully stored folder path with security-scoped bookmark: {path}")
+        else:
+            print(f"⚠️  Stored folder path without security-scoped bookmark: {path}")
+        self.settings.sync()
+        
+    def show_welcome_dialog(self):
+        """Show the welcome dialog for first launch"""
+        dialog = WelcomeDialog()
+        result = dialog.exec_()
+        
+        if result == QDialog.Accepted and dialog.selected_folder:
+            # Store the selected folder
+            self.set_audio_folder_path(dialog.selected_folder)
+            return dialog.selected_folder
+        else:
+            # User quit or cancelled
+            return None
+            
+    def run(self):
+        """Main application entry point"""
+        audio_folder_path = None
+        
+        if self.is_first_launch():
+            # First launch - show welcome dialog
+            audio_folder_path = self.show_welcome_dialog()
+            if not audio_folder_path:
+                # User quit during onboarding
+                return 1
+        else:
+            # Not first launch - get stored path
+            audio_folder_path = self.get_audio_folder_path()
+            
+        # Create and show main window
+        self.main_window = MainWindow(audio_folder_path)
+        self.main_window.show()
+        
+        # Start event loop
+        return self.app.exec()
+
+
+def main():
+    """Main entry point of the application"""
+    app_controller = AudioTransLocalApp()
+    return app_controller.run()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

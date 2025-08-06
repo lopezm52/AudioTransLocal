@@ -1,0 +1,36 @@
+# GUI Framework - PySide6 (officially supported Qt for Python)
+PySide6>=6.5.0
+
+# Secure credential storage
+keyring>=24.0.0
+
+# HTTP requests for model downloads
+requests>=2.28.0
+pydantic>=2.0.0
+
+# macOS security-scoped bookmarks support
+pyobjc-framework-Cocoa>=10.0
+
+# Database access for Voice Memos
+sqlalchemy>=2.0.0
+aiosqlite>=0.19.0
+greenlet>=2.0.0  # Required for SQLAlchemy async
+
+# Audio processing with ffmpeg
+ffmpeg-python>=0.2.0
+
+# File system monitoring for auto-refresh (US3)
+watchdog>=3.0.0
+
+# Core transcription dependencies
+torch>=2.0.0
+openai-whisper>=20231117
+numpy>=1.24.0
+
+# Audio processing support
+librosa>=0.10.0  # Optional: for advanced audio processing
+soundfile>=0.12.0  # Audio file I/O support
+
+# Future dependencies for enhanced features
+# SpeechRecognition>=3.10.0
+# pandas>=2.0.0

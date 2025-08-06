@@ -1,0 +1,92 @@
+{
+ "whisper_models": {
+    "tiny.en": {
+      "display_name": "Tiny (English Only)",
+      "filename": "ggml-tiny.en.bin",
+      "download_url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin",
+      "size_mb": 75,
+      "sha256": "921e4cf8686fdd993dcd081a5da5b6c365bfde1162e72b08d75ac75289920b1f",
+      "description": "Fastest model, English only, good for quick transcription"
+    },
+    "tiny": {
+      "display_name": "Tiny (Multilingual)",
+      "filename": "ggml-tiny.bin",
+      "download_url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin",
+      "size_mb": 75,
+      "sha256": "be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21",
+      "description": "Fastest model, supports multiple languages"
+    },
+    "base.en": {
+      "display_name": "Base (English Only)",
+      "filename": "ggml-base.en.bin",
+      "download_url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin",
+      "size_mb": 142,
+      "sha256": "137c40403d78fd54d454da0f9bd998f78703390c15a6cd2a88a97c611d3c4899",
+      "description": "Better accuracy than tiny, English only"
+    },
+    "base": {
+      "display_name": "Base (Multilingual)",
+      "filename": "ggml-base.bin",
+      "download_url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin",
+      "size_mb": 142,
+      "sha256": "465707469ff3a37a2b9b8d8f89f2f99de7299dac7e3e8fe0aa3b15a1a9df7f39",
+      "description": "Better accuracy than tiny, supports multiple languages"
+    },
+    "small.en": {
+      "display_name": "Small (English Only)",
+      "filename": "ggml-small.en.bin",
+      "download_url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin",
+      "size_mb": 466,
+      "sha256": "db8a495a91d927739e50b3fc1cc4c6b8f6c2d022add7a87ad7c3b6d02d3a4e2d",
+      "description": "Good balance of speed and accuracy, English only"
+    },
+    "small": {
+      "display_name": "Small (Multilingual)",
+      "filename": "ggml-small.bin",
+      "download_url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin",
+      "size_mb": 466,
+      "sha256": "55356645c2b361a969dfd0ef2c5a50d530afd8d5a6cf53f3c6f5ad4021d59627",
+      "description": "Good balance of speed and accuracy, supports multiple languages"
+    },
+    "medium.en": {
+      "display_name": "Medium (English Only)",
+      "filename": "ggml-medium.en.bin",
+      "download_url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.en.bin",
+      "size_mb": 1500,
+      "sha256": "8c30f0e44ce9560643ebd10bbe50cd20eafd37230f395b353ccdd04c6ab976c8",
+      "description": "High accuracy, slower processing, English only"
+    },
+    "medium": {
+      "display_name": "Medium (Multilingual)",
+      "filename": "ggml-medium.bin",
+      "download_url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin",
+      "size_mb": 1500,
+      "sha256": "fd9727b6e1217c2f614f9b698455c4ffd82463b4e74a2e046772deb4fa96d0e4",
+      "description": "High accuracy, slower processing, supports multiple languages"
+    },
+    "large-v2": {
+      "display_name": "Large-v2 (Multilingual)",
+      "filename": "ggml-large-v2.bin",
+      "download_url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v2.bin",
+      "size_mb": 2900,
+      "sha256": "8b20352a38eb287b72b4d3c1d29c1bb0998a4377f97a4f109742a97a7cb40a2b",
+      "description": "Best accuracy, supports multiple languages, slower transcription"
+    },
+    "large-v3": {
+      "display_name": "Large-v3 (Multilingual)",
+      "filename": "ggml-large-v3.bin",
+      "download_url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin",
+      "size_mb": 2900,
+      "sha256": "416471702617ca5705ba32e3c6cb1d82de452f4a7d056ccdfc67c64154caa6b1",
+      "description": "Best accuracy, latest model version, high latency"
+    },
+    "large-v3-q5_0": {
+      "display_name": "Large-v3 Quantized (q5_0)",
+      "filename": "ggml-large-v3-q5_0.bin",
+      "download_url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-q5_0.bin",
+      "size_mb": 1450,
+      "sha256": "7a1d34ff84219460b1cbe8a2b9dbca56ed46c5fef0e4cb50e2968a3b7e22fc95",
+      "description": "Quantized version of large-v3 for better speed and smaller size"
+    }
+  }
+}
