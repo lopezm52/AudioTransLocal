@@ -3,26 +3,24 @@
 Whisper Model Manager for AudioTransLocal
 
 This module centralizes all Whisper model management including:
-- Model selection and validation
+- Model selection and validation using Pydantic models
 - Settings persistence
 - Model file verification
 - Path management
-- Model downloading with progress tracking
 
 Epic 3: Core Transcription Workflow - Model Management
 """
 
-import json
 import logging
-import os
-import shutil
 from pathlib import Path
-from typing import Optional, Dict, Any, List, Tuple
+from typing import Optional, List, Tuple, Dict, Any
 
 from PySide6.QtCore import QSettings, QObject, Signal
+from pydantic import ValidationError
+
+from app.models.whisper_model import WhisperModelConfig, WhisperModel
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -30,25 +28,17 @@ class WhisperModelManager(QObject):
     """
     Centralized manager for Whisper model selection and validation.
     
-    This class handles all aspects of Whisper model management:
-    - Loading available models from whisper_models.json
-    - Persisting user's selected model in QSettings
-    - Validating model file existence and integrity
-    - Providing model information to UI components
-    - Downloading models to proper storage location
+    This class handles all aspects of Whisper model management using
+    type-safe Pydantic models for configuration data.
     """
     
     # Signal emitted when the selected model changes
-    model_changed = Signal(str)  # model_path
-    # Signal emitted when download progress updates
-    download_progress = Signal(str, int)  # model_name, percentage
-    # Signal emitted when download completes
-    download_completed = Signal(str, bool)  # model_name, success
-    
+    model_changed = Signal(str)  # model_id
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.settings = QSettings()
-        self._models_config = None
+        self._models_config: Optional[WhisperModelConfig] = None
         self._models_dir = Path.home() / "Library" / "Application Support" / "AudioTransLocal" / "models"
         self._models_dir.mkdir(parents=True, exist_ok=True)
         self._load_models_config()
@@ -58,64 +48,55 @@ class WhisperModelManager(QObject):
         return self._models_dir
     
     def _load_models_config(self):
-        """Load models configuration from whisper_models.json"""
+        """Load models configuration using Pydantic validation"""
         try:
             # Try resources directory first
             models_file = Path(__file__).parent.parent.parent / "resources" / "whisper_models.json"
+            
             if models_file.exists():
-                with open(models_file, 'r') as f:
-                    self._models_config = json.load(f)
-                logger.info(f"✅ Loaded {len(self._models_config.get('whisper_models', {}))} model configurations")
+                self._models_config = WhisperModelConfig.load_from_json(models_file)
+                logger.info(f"✅ Loaded {len(self._models_config.whisper_models)} model configurations with validation")
             else:
-                # Fallback to basic configuration
                 logger.warning(f"⚠️ Models config not found: {models_file}")
-                self._models_config = {
-                    "whisper_models": {
-                        "tiny": {
-                            "display_name": "Tiny",
-                            "description": "Fastest, least accurate",
-                            "size": "39 MB",
-                            "size_mb": 39,
-                            "filename": "tiny.pt"
-                        },
-                        "base": {
-                            "display_name": "Base", 
-                            "description": "Good balance of speed and accuracy",
-                            "size": "142 MB",
-                            "size_mb": 142,
-                            "filename": "base.pt"
-                        },
-                        "small": {
-                            "display_name": "Small",
-                            "description": "Better accuracy, slower", 
-                            "size": "466 MB",
-                            "size_mb": 466,
-                            "filename": "small.pt"
-                        },
-                        "medium": {
-                            "display_name": "Medium",
-                            "description": "High accuracy",
-                            "size": "1.42 GB", 
-                            "size_mb": 1420,
-                            "filename": "medium.pt"
-                        },
-                        "large": {
-                            "display_name": "Large",
-                            "description": "Best accuracy, slowest",
-                            "size": "2.87 GB",
-                            "size_mb": 2870, 
-                            "filename": "large.pt"
-                        }
-                    }
-                }
+                self._create_fallback_config()
+                
+        except ValidationError as e:
+            logger.error(f"❌ Model configuration validation failed: {e}")
+            self._create_fallback_config()
         except Exception as e:
             logger.error(f"❌ Failed to load models config: {e}")
-            self._models_config = {
-                "whisper_models": {
-                    "tiny": {"display_name": "Tiny", "size": "39 MB", "size_mb": 39},
-                    "base": {"display_name": "Base", "size": "142 MB", "size_mb": 142}
+            self._create_fallback_config()
+    
+    def _create_fallback_config(self):
+        """Create a minimal fallback configuration"""
+        fallback_data = {
+            "whisper_models": {
+                "tiny": {
+                    "display_name": "Tiny",
+                    "filename": "ggml-tiny.bin",
+                    "download_url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin",
+                    "size_mb": 75,
+                    "sha256": "be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21",
+                    "description": "Fastest model, multilingual support"
+                },
+                "base": {
+                    "display_name": "Base",
+                    "filename": "ggml-base.bin", 
+                    "download_url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin",
+                    "size_mb": 142,
+                    "sha256": "465707469ff3a37a2b9b8d8f89f2f99de7299dac7e3e8fe0aa3b15a1a9df7f39",
+                    "description": "Good balance of speed and accuracy"
                 }
             }
+        }
+        
+        try:
+            self._models_config = WhisperModelConfig(**fallback_data)
+            logger.info("✅ Created fallback model configuration")
+        except ValidationError as e:
+            logger.error(f"❌ Failed to create fallback config: {e}")
+            # Create minimal empty config as last resort
+            self._models_config = WhisperModelConfig(whisper_models={})
     
     def get_available_models(self) -> List[Tuple[str, str]]:
         """
@@ -124,22 +105,32 @@ class WhisperModelManager(QObject):
         Returns:
             List of (model_id, display_name) tuples
         """
-        models = self._models_config.get("whisper_models", {})
+        if not self._models_config:
+            return []
+        
         model_list = []
         
-        for model_id, model_info in models.items():
-            display_name = model_info.get("display_name", model_id)
-            size_info = model_info.get("size", "")
-            if size_info:
-                display_name += f" ({size_info})"
+        for model_id, model in self._models_config.whisper_models.items():
+            display_name = f"{model.display_name} ({model.size_mb} MB)"
             model_list.append((model_id, display_name))
         
         return model_list
     
-    def get_model_info(self, model_id: str) -> Optional[Dict[str, Any]]:
-        """Get detailed information about a specific model"""
-        models = self._models_config.get("whisper_models", {})
-        return models.get(model_id)
+    def get_model_info(self, model_id: str) -> Optional[WhisperModel]:
+        """
+        Get detailed information about a specific model.
+        
+        Args:
+            model_id: The model identifier
+            
+        Returns:
+            WhisperModel instance with validated data, or None if not found
+        """
+        if not self._models_config:
+            return None
+        
+        return self._models_config.get_model(model_id)
+    
     
     def is_model_downloaded(self, model_id: str) -> bool:
         """
@@ -151,13 +142,12 @@ class WhisperModelManager(QObject):
         Returns:
             True if model is downloaded, False otherwise
         """
-        model_info = self.get_model_info(model_id)
-        if not model_info:
+        model = self.get_model_info(model_id)
+        if not model:
             return False
             
         # Check for ggml model file in our application's models directory
-        filename = model_info.get("filename", f"ggml-{model_id}.bin")
-        model_file = self._models_dir / filename
+        model_file = self._models_dir / model.filename
         
         # Verify file exists and has reasonable size (> 1MB to avoid empty files)
         if model_file.exists():
@@ -168,7 +158,7 @@ class WhisperModelManager(QObject):
                 return False
         
         return False
-    
+
     def get_model_status_text(self, model_id: str) -> str:
         """
         Get status text for a model for UI display.
@@ -179,25 +169,19 @@ class WhisperModelManager(QObject):
         Returns:
             Status text describing the model's download state
         """
-        model_info = self.get_model_info(model_id)
-        if not model_info:
+        model = self.get_model_info(model_id)
+        if not model:
             return "Unknown model"
         
         if self.is_model_downloaded(model_id):
             return "Downloaded"
         else:
-            # Try size_mb first, then size, then fallback
-            size_mb = model_info.get("size_mb")
-            if size_mb:
-                size = f"{size_mb} MB"
-            else:
-                size = model_info.get("size", "Unknown size")
-            return f"Not downloaded ({size})"
-    
+            return f"Not downloaded ({model.size_mb} MB)"
+
     def get_current_model(self) -> str:
         """Get the currently selected model ID"""
         return self.settings.value("transcription/selected_model", "tiny")
-    
+
     def set_current_model(self, model_id: str) -> bool:
         """
         Set the current Whisper model.
@@ -208,8 +192,8 @@ class WhisperModelManager(QObject):
         Returns:
             True if model was set successfully, False otherwise
         """
-        models = dict(self.get_available_models())
-        if model_id not in [mid for mid, _ in self.get_available_models()]:
+        available_model_ids = [mid for mid, _ in self.get_available_models()]
+        if model_id not in available_model_ids:
             logger.error(f"❌ Model not available: {model_id}")
             return False
         
@@ -220,7 +204,7 @@ class WhisperModelManager(QObject):
         logger.info(f"✅ Selected model: {model_id}")
         self.model_changed.emit(model_id)
         return True
-    
+
     def get_model_download_info(self, model_id: str) -> Optional[Dict[str, Any]]:
         """
         Get download information for a specific model.
@@ -231,23 +215,20 @@ class WhisperModelManager(QObject):
         Returns:
             Dictionary with download info including URL and destination path
         """
-        model_info = self.get_model_info(model_id)
-        if not model_info:
+        model = self.get_model_info(model_id)
+        if not model:
             return None
         
-        # Get download URL and destination path
-        download_url = model_info.get("download_url")
-        filename = model_info.get("filename", f"ggml-{model_id}.bin")
-        destination_path = self._models_dir / filename
+        destination_path = self._models_dir / model.filename
         
         return {
             "model_id": model_id,
-            "download_url": download_url,
+            "download_url": str(model.download_url),
             "destination_path": str(destination_path),
-            "filename": filename,
-            "size_mb": model_info.get("size_mb", 0),
-            "sha256": model_info.get("sha256"),
-            "display_name": model_info.get("display_name", model_id)
+            "filename": model.filename,
+            "size_mb": model.size_mb,
+            "sha256": model.sha256,
+            "display_name": model.display_name
         }
     
     def verify_model_integrity(self, model_id: str) -> bool:
@@ -287,3 +268,25 @@ class WhisperModelManager(QObject):
         except Exception as e:
             logger.error(f"❌ Failed to verify model integrity: {e}")
             return False
+
+    def get_models_by_size_range(self, max_size_mb: Optional[int] = None) -> List[Tuple[str, str]]:
+        """
+        Get models filtered by maximum size.
+        
+        Args:
+            max_size_mb: Maximum size in MB, or None for no limit
+            
+        Returns:
+            List of (model_id, display_name) tuples for models within size limit
+        """
+        if not self._models_config:
+            return []
+        
+        filtered_models = self._models_config.get_models_by_size(max_size_mb)
+        
+        result = []
+        for model_id, model in filtered_models.items():
+            display_name = f"{model.display_name} ({model.size_mb} MB)"
+            result.append((model_id, display_name))
+        
+        return result

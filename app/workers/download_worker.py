@@ -359,9 +359,11 @@ class WhisperModelDownloadTask(QObject):
         from PySide6.QtCore import QThreadPool
         QThreadPool.globalInstance().start(self.download_worker)
     
-    @Slot(str, int, int, int)
-    def _on_progress_updated(self, model_id: str, percentage: int, downloaded: int, total: int):
+    @Slot(dict)
+    def _on_progress_updated(self, progress_data: dict):
         """Handle progress updates from worker"""
+        model_id = progress_data.get('model_id', '')
+        percentage = progress_data.get('percentage', 0)
         self.progress_updated.emit(model_id, percentage)
     
     @Slot(str, str)

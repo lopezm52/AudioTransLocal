@@ -10,6 +10,7 @@ and provides real-time progress updates.
 import hashlib
 import logging
 import os
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -20,19 +21,19 @@ logger = logging.getLogger(__name__)
 
 
 class ModelDownloadSignals(QObject):
-    """Signals for model download worker"""
+    """Signals for model download worker with structured data"""
     
-    # Emitted when download progress changes (model_id, percentage, bytes_downloaded, total_bytes)
-    progress_updated = Signal(str, int, int, int)
+    # Emitted when download progress changes - passes structured progress dict
+    progress_updated = Signal(dict)  # {'model_id': str, 'percentage': int, 'downloaded_bytes': int, 'total_bytes': int, 'speed_bps': float}
     
-    # Emitted when download status changes (model_id, status_message)
-    status_updated = Signal(str, str)
+    # Emitted when download status changes
+    status_updated = Signal(str, str)  # model_id, status_message
     
-    # Emitted when download completes (model_id, success, message)
-    download_completed = Signal(str, bool, str)
+    # Emitted when download completes
+    download_completed = Signal(str, bool, str)  # model_id, success, message
     
-    # Emitted when download is cancelled (model_id)
-    download_cancelled = Signal(str)
+    # Emitted when download is cancelled
+    download_cancelled = Signal(str)  # model_id
 
 
 class ModelDownloadWorker(QRunnable):
@@ -85,6 +86,9 @@ class ModelDownloadWorker(QRunnable):
         try:
             self.signals.status_updated.emit(self.model_id, "Connecting...")
             
+            download_start_time = time.time()
+            last_progress_time = download_start_time
+            
             # Use httpx for streaming download with progress tracking
             with httpx.stream("GET", self.download_url, follow_redirects=True) as response:
                 if response.status_code != 200:
@@ -115,12 +119,28 @@ class ModelDownloadWorker(QRunnable):
                         f.write(chunk)
                         downloaded_size += len(chunk)
                         
-                        # Calculate and emit progress
-                        if total_size > 0:
-                            percentage = int((downloaded_size / total_size) * 100)
-                            self.signals.progress_updated.emit(
-                                self.model_id, percentage, downloaded_size, total_size
-                            )
+                        # Calculate progress and speed
+                        current_time = time.time()
+                        if current_time - last_progress_time >= 0.1:  # Update every 100ms
+                            elapsed_time = current_time - download_start_time
+                            speed_bps = downloaded_size / elapsed_time if elapsed_time > 0 else 0
+                            
+                            if total_size > 0:
+                                percentage = int((downloaded_size / total_size) * 100)
+                            else:
+                                percentage = 0
+                            
+                            # Emit structured progress data
+                            progress_data = {
+                                'model_id': self.model_id,
+                                'percentage': percentage,
+                                'downloaded_bytes': downloaded_size,
+                                'total_bytes': total_size,
+                                'speed_bps': speed_bps,
+                                'elapsed_seconds': elapsed_time
+                            }
+                            self.signals.progress_updated.emit(progress_data)
+                            last_progress_time = current_time
                 
                 self.signals.status_updated.emit(self.model_id, "Download complete, verifying...")
                 

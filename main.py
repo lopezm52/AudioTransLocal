@@ -1,29 +1,45 @@
 #!/usr/bin/env python3
 """
-AudioTransLocal - Audio transcription application with dependency injection architecture
+AudioTransLocal - Audio transcription application with improved dependency injection architecture
 """
 
 import sys
+import logging
 from PySide6.QtWidgets import QApplication, QDialog
 from PySide6.QtCore import QSettings
 
-from app.core.service_factory import ServiceFactory
+from app.core.service_factory import ServiceContainer, create_container
 from app.views.main_window import MainWindow
 from app.views.preferences_window import PreferencesWindow
 from app.views.welcome_dialog import WelcomeDialog
 from app.services.credentials_manager import CredentialsManager
 from app.services.macos_bookmarks import BookmarkAwareSettings
 
+logger = logging.getLogger(__name__)
+
 
 class AudioTransLocalApp:
-    """Main application controller with dependency injection"""
+    """
+    Main application controller with improved dependency injection.
+    
+    Uses the new ServiceContainer for better scalability and maintainability.
+    """
     
     def __init__(self):
         self.app = QApplication(sys.argv)
         self.settings = QSettings("AudioTransLocal", "AudioTransLocal")
         self.bookmark_settings = BookmarkAwareSettings(self.settings)
-        self.service_factory = ServiceFactory()
+        
+        # Use the new ServiceContainer instead of ServiceFactory
+        self.container = create_container()
+        
+        # Register application-specific services
+        self.container.register_singleton("settings", self.settings)
+        self.container.register_singleton("bookmark_settings", self.bookmark_settings)
+        
         self.main_window = None
+        
+        logger.info("AudioTransLocal application initialized with ServiceContainer")
         
     def is_first_launch(self):
         """Check if this is the first launch"""
@@ -44,8 +60,8 @@ class AudioTransLocalApp:
         
     def show_welcome_dialog(self):
         """Show the welcome dialog for first launch"""
-        # Get dependencies from service factory
-        credentials_manager = self.service_factory.get_credentials_manager()
+        # Get dependencies from service container
+        credentials_manager = self.container.get("credentials_manager")
         
         # Create welcome dialog with dependencies
         dialog = WelcomeDialog(
@@ -76,10 +92,10 @@ class AudioTransLocalApp:
             # Not first launch - get stored path
             audio_folder_path = self.get_audio_folder_path()
             
-        # Get all required services from the factory
-        whisper_model_manager = self.service_factory.get_whisper_model_manager()
-        credentials_manager = self.service_factory.get_credentials_manager()
-        transcription_service = self.service_factory.get_transcription_service()
+        # Get all required services from the container
+        whisper_model_manager = self.container.get("whisper_model_manager")
+        credentials_manager = self.container.get("credentials_manager")
+        transcription_service = self.container.get("transcription_service")
         
         # Create and show main window with dependency injection
         self.main_window = MainWindow(
