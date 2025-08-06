@@ -330,6 +330,11 @@ class VoiceMemoDetailPanel(QWidget):
         self.transcribe_button.clicked.connect(self._on_transcribe_button_clicked)
         button_layout.addWidget(self.transcribe_button)
         
+        self.view_transcription_button = QPushButton("View Transcription")
+        self.view_transcription_button.setEnabled(False)
+        self.view_transcription_button.clicked.connect(self._on_view_transcription_button_clicked)
+        button_layout.addWidget(self.view_transcription_button)
+        
         button_layout.addStretch()
         layout.addLayout(button_layout)
         
@@ -340,6 +345,8 @@ class VoiceMemoDetailPanel(QWidget):
         self.results_text = QTextEdit()
         self.results_text.setPlaceholderText("Transcription results will appear here...")
         self.results_text.setMaximumHeight(200)
+        # Set same font as transcription dialog for consistency
+        self.results_text.setFont(QFont("Arial", 14))
         
         results_layout.addWidget(self.results_text)
         layout.addWidget(results_group)
@@ -403,6 +410,9 @@ class VoiceMemoDetailPanel(QWidget):
         else:
             self.transcribe_button.setText("Start Transcription")
         
+        # Enable view transcription button only if transcription exists
+        self.view_transcription_button.setEnabled(status == VoiceMemoStatus.TRANSCRIBED)
+        
         # Load existing transcription if available
         self._load_existing_transcription(memo)
     
@@ -417,6 +427,7 @@ class VoiceMemoDetailPanel(QWidget):
         self.progress_bar.setVisible(False)
         self.transcribe_button.setEnabled(False)
         self.transcribe_button.setText("Start Transcription")
+        self.view_transcription_button.setEnabled(False)
         self.results_text.clear()
     
     def _update_status(self, status: VoiceMemoStatus):
@@ -442,6 +453,7 @@ class VoiceMemoDetailPanel(QWidget):
         if status in [VoiceMemoStatus.TRANSCRIBING, VoiceMemoStatus.PROCESSING]:
             self.transcribe_button.setEnabled(False)
             self.transcribe_button.setText("Transcribing...")
+            # Keep view button enabled if transcription exists (from previous run)
         # The button state for other statuses is handled in set_memo method
     
     def _load_existing_transcription(self, memo: VoiceMemoModel):
@@ -457,6 +469,9 @@ class VoiceMemoDetailPanel(QWidget):
                 
                 self.results_text.setPlainText(transcription_text)
                 logger.info(f"📄 Loaded existing transcription: {len(transcription_text)} characters")
+                
+                # Enable view transcription button since file exists
+                self.view_transcription_button.setEnabled(True)
                 
                 # Update memo status to transcribed and notify parent view
                 memo.transcription_status = "transcribed"
@@ -492,6 +507,22 @@ class VoiceMemoDetailPanel(QWidget):
                 self,
                 "No Memo Selected", 
                 "Please select a voice memo to transcribe."
+            )
+    
+    def _on_view_transcription_button_clicked(self):
+        """Handle view transcription button click from detail panel"""
+        if self._current_memo:
+            # Find parent view and open transcription dialog
+            parent = self.parent()
+            while parent and not hasattr(parent, '_show_transcription_dialog'):
+                parent = parent.parent()
+            if parent and hasattr(parent, '_show_transcription_dialog'):
+                parent._show_transcription_dialog(self._current_memo)
+        else:
+            QMessageBox.warning(
+                self,
+                "No Memo Selected",
+                "Please select a voice memo to view transcription."
             )
 
 
@@ -1135,7 +1166,23 @@ class VoiceMemoView(QWidget):
     def _show_transcription_dialog(self, memo: VoiceMemoModel):
         """Show the transcription in a dialog window"""
         try:
-            with open(memo.transcription_file_path, 'r', encoding='utf-8') as f:
+            # Determine transcription file path
+            if hasattr(memo, 'transcription_file_path') and memo.transcription_file_path:
+                transcription_file = memo.transcription_file_path
+            else:
+                # Fallback: construct path from memo UUID
+                transcription_dir = Path.home() / "Library" / "Application Support" / "AudioTransLocal" / "transcriptions"
+                transcription_file = transcription_dir / f"{memo.uuid}.txt"
+            
+            if not transcription_file.exists():
+                QMessageBox.warning(
+                    self,
+                    "No Transcription",
+                    "No transcription file found for this memo."
+                )
+                return
+            
+            with open(transcription_file, 'r', encoding='utf-8') as f:
                 transcript_text = f.read()
             
             dialog = TranscriptionViewDialog(memo, transcript_text, self)

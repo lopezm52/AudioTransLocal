@@ -48,31 +48,43 @@ class TranscriptionViewDialog(QDialog):
         # Header with memo information
         header_frame = QFrame()
         header_frame.setFrameStyle(QFrame.Shape.Box)
-        header_frame.setStyleSheet("QFrame { background-color: #f5f5f5; padding: 8px; }")
+        header_frame.setStyleSheet("""
+            QFrame { 
+                background-color: #2b2b2b; 
+                color: white; 
+                padding: 12px; 
+                border: 1px solid #555;
+                border-radius: 6px;
+            }
+        """)
         header_layout = QVBoxLayout(header_frame)
         
         # Title
         title_label = QLabel(f"📝 {self.memo.title}")
         title_font = QFont()
         title_font.setBold(True)
-        title_font.setPointSize(12)
+        title_font.setPointSize(14)  # Increased from 12
         title_label.setFont(title_font)
+        title_label.setStyleSheet("color: white;")
         header_layout.addWidget(title_label)
         
         # Metadata
         if hasattr(self.memo, 'creation_date') and self.memo.creation_date:
             date_str = self.memo.creation_date.strftime("%B %d, %Y at %H:%M")
             date_label = QLabel(f"🗓️ Created: {date_str}")
+            date_label.setStyleSheet("color: #cccccc;")
             header_layout.addWidget(date_label)
         
         if hasattr(self.memo, 'duration') and self.memo.duration:
             minutes = int(self.memo.duration // 60)
             seconds = int(self.memo.duration % 60)
             duration_label = QLabel(f"⏱️ Duration: {minutes}:{seconds:02d}")
+            duration_label.setStyleSheet("color: #cccccc;")
             header_layout.addWidget(duration_label)
         
         if hasattr(self.memo, 'detected_language') and self.memo.detected_language:
             lang_label = QLabel(f"🌍 Language: {self.memo.detected_language}")
+            lang_label.setStyleSheet("color: #cccccc;")
             header_layout.addWidget(lang_label)
         
         layout.addWidget(header_frame)
@@ -80,7 +92,7 @@ class TranscriptionViewDialog(QDialog):
         # Transcript text area
         self.text_edit = QTextEdit()
         self.text_edit.setReadOnly(True)
-        self.text_edit.setFont(QFont("Georgia", 11))  # Readable font for text
+        self.text_edit.setFont(QFont("Arial", 14))  # Increased from 11 to 14
         self.text_edit.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
         layout.addWidget(self.text_edit)
         

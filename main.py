@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 AudioTransLocal - Audio transcription application with improved dependency injection architecture
 """
