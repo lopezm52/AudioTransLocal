@@ -392,8 +392,16 @@ class VoiceMemoDetailPanel(QWidget):
         # Update status
         self._update_status(status)
         
-        # Enable transcribe button if memo is ready
-        self.transcribe_button.setEnabled(status == VoiceMemoStatus.NEW and memo.file_exists)
+        # Enable transcribe button if memo is ready (including re-transcription)
+        self.transcribe_button.setEnabled(
+            (status in [VoiceMemoStatus.NEW, VoiceMemoStatus.TRANSCRIBED]) and memo.file_exists
+        )
+        
+        # Update button text based on status
+        if status == VoiceMemoStatus.TRANSCRIBED:
+            self.transcribe_button.setText("Re-transcribe")
+        else:
+            self.transcribe_button.setText("Start Transcription")
         
         # Load existing transcription if available
         self._load_existing_transcription(memo)
@@ -408,6 +416,7 @@ class VoiceMemoDetailPanel(QWidget):
         self.status_label.setText("Status: -")
         self.progress_bar.setVisible(False)
         self.transcribe_button.setEnabled(False)
+        self.transcribe_button.setText("Start Transcription")
         self.results_text.clear()
     
     def _update_status(self, status: VoiceMemoStatus):
@@ -428,6 +437,12 @@ class VoiceMemoDetailPanel(QWidget):
         
         if show_progress:
             self.progress_bar.setRange(0, 0)  # Indeterminate progress
+        
+        # Disable transcribe button during active processing
+        if status in [VoiceMemoStatus.TRANSCRIBING, VoiceMemoStatus.PROCESSING]:
+            self.transcribe_button.setEnabled(False)
+            self.transcribe_button.setText("Transcribing...")
+        # The button state for other statuses is handled in set_memo method
     
     def _load_existing_transcription(self, memo: VoiceMemoModel):
         """Load existing transcription text if available"""
@@ -1075,6 +1090,9 @@ class VoiceMemoView(QWidget):
                 selected_memo = self.table_model.get_memo_at_row(source_index.row())
                 if selected_memo and selected_memo.uuid == memo_id:
                     self._load_transcription_in_detail_panel(memo)
+                    # Update detail panel status to re-enable transcribe button
+                    from app.services.voice_memo_model import VoiceMemoStatus
+                    self.detail_panel.set_memo(memo, VoiceMemoStatus.TRANSCRIBED)
             
             logger.info(f"✅ Transcription completed: {memo_id} -> {file_path}")
     
