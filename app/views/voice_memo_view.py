@@ -327,6 +327,7 @@ class VoiceMemoDetailPanel(QWidget):
         
         self.transcribe_button = QPushButton("Start Transcription")
         self.transcribe_button.setEnabled(False)
+        self.transcribe_button.clicked.connect(self._on_transcribe_button_clicked)
         button_layout.addWidget(self.transcribe_button)
         
         button_layout.addStretch()
@@ -393,6 +394,9 @@ class VoiceMemoDetailPanel(QWidget):
         
         # Enable transcribe button if memo is ready
         self.transcribe_button.setEnabled(status == VoiceMemoStatus.NEW and memo.file_exists)
+        
+        # Load existing transcription if available
+        self._load_existing_transcription(memo)
     
     def _clear_details(self):
         """Clear all detail information"""
@@ -424,6 +428,56 @@ class VoiceMemoDetailPanel(QWidget):
         
         if show_progress:
             self.progress_bar.setRange(0, 0)  # Indeterminate progress
+    
+    def _load_existing_transcription(self, memo: VoiceMemoModel):
+        """Load existing transcription text if available"""
+        try:
+            # Check if transcription file exists based on memo UUID
+            transcription_dir = Path.home() / "Library" / "Application Support" / "AudioTransLocal" / "transcriptions"
+            transcription_file = transcription_dir / f"{memo.uuid}.txt"
+            
+            if transcription_file.exists():
+                with open(transcription_file, 'r', encoding='utf-8') as f:
+                    transcription_text = f.read()
+                
+                self.results_text.setPlainText(transcription_text)
+                logger.info(f"📄 Loaded existing transcription: {len(transcription_text)} characters")
+                
+                # Update memo status to transcribed and notify parent view
+                memo.transcription_status = "transcribed"
+                memo.transcription_file_path = transcription_file
+                
+                # Find parent view and update status
+                parent = self.parent()
+                while parent and not hasattr(parent, 'state_manager'):
+                    parent = parent.parent()
+                if parent and hasattr(parent, 'state_manager'):
+                    from app.services.voice_memo_model import VoiceMemoStatus
+                    parent.state_manager.set_status(memo.uuid, VoiceMemoStatus.TRANSCRIBED)
+                    
+            else:
+                self.results_text.clear()
+                self.results_text.setPlaceholderText("Transcription results will appear here...")
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to load existing transcription: {e}")
+            self.results_text.clear()
+            self.results_text.setPlaceholderText("Transcription results will appear here...")
+    
+    def _on_transcribe_button_clicked(self):
+        """Handle transcribe button click from detail panel"""
+        if self._current_memo:
+            # Emit signal to parent view to handle transcription
+            parent = self.parent()
+            while parent and not hasattr(parent, '_on_transcribe_requested'):
+                parent = parent.parent()
+            if parent and hasattr(parent, '_on_transcribe_requested'):
+                parent._on_transcribe_requested(self._current_memo.uuid)
+        else:
+            QMessageBox.warning(
+                self,
+                "No Memo Selected", 
+                "Please select a voice memo to transcribe."
+            )
 
 
 class VoiceMemoView(QWidget):
@@ -797,7 +851,33 @@ class VoiceMemoView(QWidget):
             self._loader_thread = None
             self._loader = None
         
+        # Check for existing transcriptions and update statuses
+        self._check_existing_transcriptions(memos)
+        
         logger.info(f"✅ Successfully loaded {len(memos)} Voice Memos")
+    
+    def _check_existing_transcriptions(self, memos: List[VoiceMemoModel]):
+        """Check for existing transcription files and update memo statuses"""
+        transcription_dir = Path.home() / "Library" / "Application Support" / "AudioTransLocal" / "transcriptions"
+        
+        if not transcription_dir.exists():
+            return
+        
+        transcribed_count = 0
+        for memo in memos:
+            transcription_file = transcription_dir / f"{memo.uuid}.txt"
+            if transcription_file.exists():
+                # Update memo status
+                memo.transcription_status = "transcribed"
+                memo.transcription_file_path = transcription_file
+                
+                # Update state manager
+                from app.services.voice_memo_model import VoiceMemoStatus
+                self.state_manager.set_status(memo.uuid, VoiceMemoStatus.TRANSCRIBED)
+                transcribed_count += 1
+        
+        if transcribed_count > 0:
+            logger.info(f"📄 Found {transcribed_count} existing transcriptions")
     
     def _on_loading_error(self, error_message: str):
         """Handle loading errors"""
@@ -876,18 +956,36 @@ class VoiceMemoView(QWidget):
     
     def _on_transcribe_requested(self, memo_id: str):
         """Handle transcription request from Actions column"""
-        # Validate Whisper model availability
-        model_validation = self.model_manager.validate_current_model()
-        if not model_validation['valid']:
-            error_msg = model_validation.get('error', 'Unknown model error')
+        # Get current model and validate
+        current_model = self.model_manager.get_current_model()
+        if not current_model:
             QMessageBox.warning(
                 self,
                 "Whisper Model Error",
-                f"Cannot start transcription: {error_msg}\n\nPlease check your Whisper model configuration."
+                "No Whisper model selected.\n\nPlease select a model in settings."
+            )
+            return
+            
+        # Check if model is downloaded
+        if not self.model_manager.is_model_downloaded(current_model):
+            QMessageBox.warning(
+                self,
+                "Whisper Model Error", 
+                f"Model '{current_model}' is not downloaded.\n\nPlease download the model first."
             )
             return
         
-        model_path = model_validation['path']
+        # Get model info for path
+        model_info = self.model_manager.get_model_info(current_model)
+        if not model_info:
+            QMessageBox.warning(
+                self,
+                "Whisper Model Error",
+                f"Invalid model configuration for '{current_model}'."
+            )
+            return
+            
+        model_path = self.model_manager.get_models_directory() / model_info.filename
         logger.info(f"✅ Using Whisper model: {model_path}")
         
         # Find the memo
@@ -969,6 +1067,15 @@ class VoiceMemoView(QWidget):
             memo.transcription_progress = None
             memo.transcription_error = None
             self._refresh_memo_display(memo)
+            
+            # If this memo is currently selected, update the detail panel with transcription
+            current = self.table_view.selectionModel().currentIndex()
+            if current.isValid():
+                source_index = self.proxy_model.mapToSource(current)
+                selected_memo = self.table_model.get_memo_at_row(source_index.row())
+                if selected_memo and selected_memo.uuid == memo_id:
+                    self._load_transcription_in_detail_panel(memo)
+            
             logger.info(f"✅ Transcription completed: {memo_id} -> {file_path}")
     
     def _on_transcription_error(self, memo_id: str, error_message: str):
@@ -1020,6 +1127,23 @@ class VoiceMemoView(QWidget):
             error_msg = f"Failed to open transcription file: {e}"
             logger.error(f"❌ {error_msg}")
             QMessageBox.critical(self, "File Error", error_msg)
+    
+    def _load_transcription_in_detail_panel(self, memo: VoiceMemoModel):
+        """Load transcription text into the detail panel results area"""
+        try:
+            if memo.transcription_file_path and memo.transcription_file_path.exists():
+                with open(memo.transcription_file_path, 'r', encoding='utf-8') as f:
+                    transcription_text = f.read()
+                
+                # Update the detail panel's results text area
+                self.detail_panel.results_text.setPlainText(transcription_text)
+                logger.info(f"📄 Loaded transcription text in detail panel: {len(transcription_text)} characters")
+            else:
+                logger.warning(f"⚠️ Transcription file not found: {memo.transcription_file_path}")
+        except Exception as e:
+            error_msg = f"Failed to load transcription text: {e}"
+            logger.error(f"❌ {error_msg}")
+            self.detail_panel.results_text.setPlainText(f"Error loading transcription: {error_msg}")
     
     def closeEvent(self, event):
         """Clean up resources when the widget is closed"""

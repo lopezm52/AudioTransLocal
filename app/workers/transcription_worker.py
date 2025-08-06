@@ -280,7 +280,7 @@ class TranscriptionWorker(QRunnable):
     
     def _whisper_detect_language(self, audio_buffer: bytes) -> str:
         """
-        Detect language using whisper.cpp.
+        Detect language using OpenAI Whisper (since whisper.cpp is not available).
         
         Args:
             audio_buffer: Raw PCM audio data
@@ -289,25 +289,40 @@ class TranscriptionWorker(QRunnable):
             Language code (e.g., 'en')
         """
         try:
-            import whisper_cpp  # TODO: Replace with actual whisper.cpp Python bindings
+            import whisper
+            import numpy as np
             
-            # Initialize whisper model for language detection
-            model = whisper_cpp.Whisper.from_file(self.model_path)
-            
-            # Convert raw PCM buffer to format expected by whisper.cpp
-            # audio_buffer is 16-bit, 16kHz mono PCM data
+            # Convert audio buffer to format expected by OpenAI Whisper
             audio_data = self._prepare_audio_for_whisper(audio_buffer)
             
-            # Run language detection (this should be faster than full transcription)
-            result = model.transcribe(audio_data, language_detection_only=True)
-            detected_language = result.language
+            # Load a small model for language detection (faster)
+            # Extract the model ID from the path (e.g., "tiny.en" from "ggml-tiny.en.bin")
+            model_filename = Path(self.model_path).name
+            if "tiny" in model_filename:
+                detect_model = "tiny"
+            elif "base" in model_filename:
+                detect_model = "base"
+            else:
+                detect_model = "tiny"  # Default to fastest
+            
+            logger.info(f"🔍 Loading {detect_model} model for language detection...")
+            model = whisper.load_model(detect_model)
+            
+            # Use detect language feature
+            # First 30 seconds should be enough for language detection
+            sample_length = min(len(audio_data), 30 * 16000)  # 30 seconds at 16kHz
+            sample_audio = audio_data[:sample_length]
+            
+            # Detect language using Whisper
+            result = model.transcribe(sample_audio, task="detect_language")
+            detected_language = result.get('language', 'en')
             
             logger.info(f"🌍 Language detected: {detected_language}")
             return detected_language
             
         except ImportError:
-            # Fallback when whisper.cpp bindings not available
-            logger.warning("⚠️ whisper.cpp not available, defaulting to English")
+            # Fallback when OpenAI Whisper not available
+            logger.warning("⚠️ OpenAI Whisper not available, defaulting to English")
             return 'en'
         except Exception as e:
             # If language detection fails, default to English but log the error
@@ -316,7 +331,7 @@ class TranscriptionWorker(QRunnable):
     
     def _whisper_transcribe_with_language(self, audio_buffer: bytes, language: str) -> str:
         """
-        Transcribe audio using whisper.cpp with specified language.
+        Transcribe audio using OpenAI Whisper with specified language.
         
         Args:
             audio_buffer: Raw PCM audio data
@@ -326,17 +341,41 @@ class TranscriptionWorker(QRunnable):
             Transcribed text
         """
         try:
-            import whisper_cpp  # TODO: Replace with actual whisper.cpp Python bindings
+            import whisper
+            import numpy as np
             
-            # Initialize whisper model
-            model = whisper_cpp.Whisper.from_file(self.model_path)
-            
-            # Convert raw PCM buffer to format expected by whisper.cpp
+            # Convert audio buffer to format expected by OpenAI Whisper
             audio_data = self._prepare_audio_for_whisper(audio_buffer)
             
+            # Extract the model ID from the path (e.g., "tiny.en" from "ggml-tiny.en.bin")
+            model_filename = Path(self.model_path).name
+            if "tiny.en" in model_filename:
+                model_id = "tiny.en"
+            elif "tiny" in model_filename:
+                model_id = "tiny"
+            elif "base.en" in model_filename:
+                model_id = "base.en" 
+            elif "base" in model_filename:
+                model_id = "base"
+            elif "small.en" in model_filename:
+                model_id = "small.en"
+            elif "small" in model_filename:
+                model_id = "small"
+            elif "medium.en" in model_filename:
+                model_id = "medium.en"
+            elif "medium" in model_filename:
+                model_id = "medium"
+            elif "large" in model_filename:
+                model_id = "large"
+            else:
+                model_id = "tiny"  # Default fallback
+            
+            logger.info(f"🤖 Loading {model_id} model for transcription...")
+            model = whisper.load_model(model_id)
+            
             # Run transcription with specified language for better accuracy and speed
-            result = model.transcribe(audio_data, language=language)
-            transcribed_text = result.text.strip()
+            result = model.transcribe(audio_data, language=language if language != 'en' else None)
+            transcribed_text = result.get('text', '').strip()
             
             chunk_size_seconds = len(audio_buffer) / (16000 * 2)  # 16kHz, 16-bit
             logger.info(f"🎯 Transcribed {chunk_size_seconds:.1f}s chunk in {language}: {len(transcribed_text)} chars")
@@ -344,7 +383,7 @@ class TranscriptionWorker(QRunnable):
             return transcribed_text
             
         except ImportError:
-            # Fallback when whisper.cpp bindings not available
+            # Fallback when OpenAI Whisper not available
             chunk_size_seconds = len(audio_buffer) / (16000 * 2)  # 16kHz, 16-bit
             placeholder_text = f"[Transcription placeholder - {chunk_size_seconds:.1f}s audio chunk in {language}]"
             logger.info(f"🎯 Using placeholder for {chunk_size_seconds:.1f}s chunk in {language}")
