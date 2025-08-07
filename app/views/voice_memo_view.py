@@ -57,6 +57,56 @@ class VoiceMemoFilterProxyModel(QSortFilterProxyModel):
         super().__init__(parent)
         self.setFilterCaseSensitivity(Qt.CaseInsensitive)
         self.setFilterKeyColumn(-1)  # Search across all columns - ensures custom filterAcceptsRow is used
+    
+    def lessThan(self, left, right):
+        """
+        Custom sorting logic to ensure proper chronological sorting.
+        This method is called by the proxy model when sorting is applied.
+        """
+        try:
+            source_model = self.sourceModel()
+            if not source_model:
+                return False
+            
+            # Get the actual memo objects for comparison
+            left_memo = source_model.get_memo_at_row(left.row())
+            right_memo = source_model.get_memo_at_row(right.row())
+            
+            if not left_memo or not right_memo:
+                return False
+            
+            column = left.column()
+            
+            # Handle date column with proper datetime comparison
+            if column == source_model.COL_DATE:
+                return left_memo.creation_date < right_memo.creation_date
+            
+            # Handle duration column with numeric comparison
+            elif column == source_model.COL_DURATION:
+                left_duration = left_memo.duration if left_memo.duration else 0
+                right_duration = right_memo.duration if right_memo.duration else 0
+                return left_duration < right_duration
+            
+            # Handle file size column with numeric comparison
+            elif column == source_model.COL_SIZE:
+                left_size = left_memo.file_size if left_memo.file_size else 0
+                right_size = right_memo.file_size if right_memo.file_size else 0
+                return left_size < right_size
+            
+            # Handle title column with case-insensitive string comparison
+            elif column == source_model.COL_TITLE:
+                return left_memo.get_display_title().lower() < right_memo.get_display_title().lower()
+            
+            # For other columns, fall back to default string comparison
+            else:
+                left_data = source_model.data(left, Qt.ItemDataRole.DisplayRole)
+                right_data = source_model.data(right, Qt.ItemDataRole.DisplayRole)
+                return str(left_data).lower() < str(right_data).lower()
+                
+        except Exception as e:
+            logger.warning(f"Error in lessThan sorting: {e}")
+            # Fall back to default comparison
+            return super().lessThan(left, right)
         
     def filterAcceptsRow(self, source_row: int, source_parent) -> bool:
         """
@@ -288,41 +338,7 @@ class VoiceMemoDetailPanel(QWidget):
         self.title_label.setFont(title_font)
         layout.addWidget(self.title_label)
         
-        # Metadata group
-        metadata_group = QGroupBox("Metadata")
-        metadata_layout = QVBoxLayout(metadata_group)
-        
-        self.date_label = QLabel("Date: -")
-        self.duration_label = QLabel("Duration: -")
-        self.size_label = QLabel("File Size: -")
-        self.path_label = QLabel("File Path: -")
-        self.path_label.setWordWrap(True)
-        
-        metadata_layout.addWidget(self.date_label)
-        metadata_layout.addWidget(self.duration_label)
-        metadata_layout.addWidget(self.size_label)
-        metadata_layout.addWidget(self.path_label)
-        
-        layout.addWidget(metadata_group)
-        
-        # Status group
-        status_group = QGroupBox("Processing Status")
-        status_layout = QVBoxLayout(status_group)
-        
-        self.status_label = QLabel("Status: -")
-        status_font = QFont()
-        status_font.setBold(True)
-        self.status_label.setFont(status_font)
-        
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setVisible(False)
-        
-        status_layout.addWidget(self.status_label)
-        status_layout.addWidget(self.progress_bar)
-        
-        layout.addWidget(status_group)
-        
-        # Action buttons
+        # Action buttons (moved up)
         button_layout = QHBoxLayout()
         
         self.transcribe_button = QPushButton("Start Transcription")
@@ -338,20 +354,22 @@ class VoiceMemoDetailPanel(QWidget):
         button_layout.addStretch()
         layout.addLayout(button_layout)
         
-        # Transcription results (placeholder)
-        results_group = QGroupBox("Transcription Results")
-        results_layout = QVBoxLayout(results_group)
-        
+        # Transcription results (moved up, no frame)
         self.results_text = QTextEdit()
         self.results_text.setPlaceholderText("Transcription results will appear here...")
-        self.results_text.setMaximumHeight(200)
         # Set same font as transcription dialog for consistency
         self.results_text.setFont(QFont("Arial", 14))
         
-        results_layout.addWidget(self.results_text)
-        layout.addWidget(results_group)
+        layout.addWidget(self.results_text)
         
-        layout.addStretch()
+        # Hidden elements for compatibility (not displayed)
+        self.date_label = QLabel()
+        self.duration_label = QLabel()
+        self.size_label = QLabel()
+        self.path_label = QLabel()
+        self.status_label = QLabel()
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setVisible(False)
     
     def set_memo(self, memo: Optional[VoiceMemoModel], status: VoiceMemoStatus = VoiceMemoStatus.NEW):
         """Update the detail panel with information about the selected memo"""
@@ -363,41 +381,6 @@ class VoiceMemoDetailPanel(QWidget):
         
         # Update title
         self.title_label.setText(memo.get_display_title())
-        
-        # Update metadata
-        # Convert UTC to CEST (UTC+2 for summer time) and use consistent format
-        utc_time = memo.creation_date
-        local_time = utc_time + timedelta(hours=2)
-        self.date_label.setText(f"Date: {local_time.strftime('%d-%b-%y %H:%M')} CEST")
-        
-        if memo.duration:
-            minutes = int(memo.duration // 60)
-            seconds = int(memo.duration % 60)
-            self.duration_label.setText(f"Duration: {minutes}:{seconds:02d} ({memo.duration:.1f} seconds)")
-        else:
-            self.duration_label.setText("Duration: Unknown")
-        
-        if memo.file_size:
-            if memo.file_size > 1024 * 1024:
-                size_mb = memo.file_size / (1024 * 1024)
-                size_text = f"File Size: {size_mb:.1f} MB ({memo.file_size:,} bytes)"
-            elif memo.file_size > 1024:
-                size_kb = memo.file_size / 1024
-                size_text = f"File Size: {size_kb:.1f} KB ({memo.file_size:,} bytes)"
-            else:
-                size_text = f"File Size: {memo.file_size} bytes"
-            self.size_label.setText(size_text)
-        else:
-            self.size_label.setText("File Size: Unknown")
-        
-        if memo.file_path:
-            file_exists = "✅" if memo.file_exists else "❌"
-            self.path_label.setText(f"File Path: {file_exists} {memo.file_path}")
-        else:
-            self.path_label.setText("File Path: Unknown")
-        
-        # Update status
-        self._update_status(status)
         
         # Enable transcribe button if memo is ready (including re-transcription)
         self.transcribe_button.setEnabled(
@@ -419,42 +402,11 @@ class VoiceMemoDetailPanel(QWidget):
     def _clear_details(self):
         """Clear all detail information"""
         self.title_label.setText("Select a Voice Memo")
-        self.date_label.setText("Date: -")
-        self.duration_label.setText("Duration: -")
-        self.size_label.setText("File Size: -")
-        self.path_label.setText("File Path: -")
-        self.status_label.setText("Status: -")
-        self.progress_bar.setVisible(False)
         self.transcribe_button.setEnabled(False)
         self.transcribe_button.setText("Start Transcription")
         self.view_transcription_button.setEnabled(False)
         self.results_text.clear()
-    
-    def _update_status(self, status: VoiceMemoStatus):
-        """Update the status display"""
-        status_texts = {
-            VoiceMemoStatus.NEW: "📄 Ready for transcription",
-            VoiceMemoStatus.TRANSCRIBING: "🔄 Transcribing...",
-            VoiceMemoStatus.TRANSCRIBED: "✅ Transcription complete",
-            VoiceMemoStatus.ERROR: "❌ Error occurred",
-            VoiceMemoStatus.PROCESSING: "⚙️ Processing..."
-        }
-        
-        self.status_label.setText(f"Status: {status_texts.get(status, status.value)}")
-        
-        # Show/hide progress bar for active states
-        show_progress = status in [VoiceMemoStatus.TRANSCRIBING, VoiceMemoStatus.PROCESSING]
-        self.progress_bar.setVisible(show_progress)
-        
-        if show_progress:
-            self.progress_bar.setRange(0, 0)  # Indeterminate progress
-        
-        # Disable transcribe button during active processing
-        if status in [VoiceMemoStatus.TRANSCRIBING, VoiceMemoStatus.PROCESSING]:
-            self.transcribe_button.setEnabled(False)
-            self.transcribe_button.setText("Transcribing...")
-            # Keep view button enabled if transcription exists (from previous run)
-        # The button state for other statuses is handled in set_memo method
+        self.results_text.setPlaceholderText("Transcription results will appear here...")
     
     def _load_existing_transcription(self, memo: VoiceMemoModel):
         """Load existing transcription text if available"""
@@ -616,17 +568,21 @@ class VoiceMemoView(QWidget):
         self.search_field.setStyleSheet("""
             QLineEdit {
                 padding: 6px 12px;
-                border: 1px solid #ccc;
+                border: 1px solid white;
                 border-radius: 6px;
                 font-size: 13px;
-                background-color: #fafafa;
+                background-color: black;
+                color: white;
             }
             QLineEdit:focus {
-                border-color: #007acc;
-                background-color: white;
+                border-color: white;
+                background-color: black;
             }
             QLineEdit:hover {
-                border-color: #999;
+                border-color: white;
+            }
+            QLineEdit::placeholder {
+                color: #888;
             }
         """)
         search_layout.addWidget(self.search_field)
@@ -681,10 +637,6 @@ class VoiceMemoView(QWidget):
             VoiceMemoTableModel.COL_STATUS, 
             self.transcription_status_delegate
         )
-        self.table_view.setItemDelegateForColumn(
-            VoiceMemoTableModel.COL_ACTIONS,
-            self.actions_delegate
-        )
         
         # Configure table appearance
         self.table_view.setAlternatingRowColors(True)
@@ -692,16 +644,14 @@ class VoiceMemoView(QWidget):
         self.table_view.setSelectionMode(QTableView.SelectionMode.SingleSelection)
         self.table_view.setSortingEnabled(True)  # Enable column sorting
         
-        # Set column widths
+        # Set column widths - Title column gets more space, no Actions column
         header = self.table_view.horizontalHeader()
         header.setSectionResizeMode(VoiceMemoTableModel.COL_TITLE, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(VoiceMemoTableModel.COL_DATE, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(VoiceMemoTableModel.COL_DURATION, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(VoiceMemoTableModel.COL_SIZE, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(VoiceMemoTableModel.COL_STATUS, QHeaderView.ResizeMode.Fixed)
-        header.setSectionResizeMode(VoiceMemoTableModel.COL_ACTIONS, QHeaderView.ResizeMode.Fixed)
         header.resizeSection(VoiceMemoTableModel.COL_STATUS, 180)
-        header.resizeSection(VoiceMemoTableModel.COL_ACTIONS, 140)
         
         # Set default sort (most recent first)
         self.table_view.sortByColumn(VoiceMemoTableModel.COL_DATE, Qt.DescendingOrder)

@@ -90,7 +90,6 @@ class VoiceMemoTableModel(QAbstractTableModel):
     COL_DURATION = 2
     COL_SIZE = 3
     COL_STATUS = 4
-    COL_ACTIONS = 5
     
     # Column headers
     HEADERS = [
@@ -98,8 +97,7 @@ class VoiceMemoTableModel(QAbstractTableModel):
         "Date Created", 
         "Duration",
         "File Size",
-        "Status",
-        "Actions"
+        "Status"
     ]
     
     def __init__(self, state_manager: VoiceMemoStateManager, parent=None):
@@ -139,6 +137,11 @@ class VoiceMemoTableModel(QAbstractTableModel):
             return self._get_display_data(memo, column)
         elif role == Qt.ItemDataRole.ToolTipRole:
             return self._get_tooltip_data(memo, column)
+        elif role == Qt.ItemDataRole.TextAlignmentRole:
+            # Right-align duration and file size columns
+            if column in [self.COL_DURATION, self.COL_SIZE]:
+                return Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+            return Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
         elif role == Qt.ItemDataRole.UserRole:
             # Return the memo object itself for custom delegates
             return memo
@@ -162,8 +165,8 @@ class VoiceMemoTableModel(QAbstractTableModel):
             utc_time = memo.creation_date
             local_time = utc_time + timedelta(hours=2)  # Add 2 hours for CEST
             
-            # Format as DD-MMM-YY HH:MM
-            return local_time.strftime("%d-%b-%y %H:%M")
+            # Format as DD.MMM.YY HH:MM
+            return local_time.strftime("%d.%b.%y %H:%M")
         
         elif column == self.COL_DURATION:
             if memo.duration:
@@ -205,10 +208,6 @@ class VoiceMemoTableModel(QAbstractTableModel):
                 memo_id = self._get_memo_id(memo)
                 status = self._state_manager.get_status(memo_id)
                 return status.value.replace('_', ' ').title()
-        
-        elif column == self.COL_ACTIONS:
-            # Actions column shows buttons - handled by custom delegate
-            return ""
         
         return ""
     

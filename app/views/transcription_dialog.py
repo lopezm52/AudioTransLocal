@@ -45,49 +45,27 @@ class TranscriptionViewDialog(QDialog):
         """Set up the dialog UI"""
         layout = QVBoxLayout(self)
         
-        # Header with memo information
-        header_frame = QFrame()
-        header_frame.setFrameStyle(QFrame.Shape.Box)
-        header_frame.setStyleSheet("""
-            QFrame { 
-                background-color: #2b2b2b; 
-                color: white; 
-                padding: 12px; 
-                border: 1px solid #555;
-                border-radius: 6px;
-            }
-        """)
-        header_layout = QVBoxLayout(header_frame)
+        # Header with memo information in single line (no frame)
+        # Build information string: icon + filename - created date - duration
+        info_parts = [f"📝 {self.memo.title}"]
         
-        # Title
-        title_label = QLabel(f"📝 {self.memo.title}")
-        title_font = QFont()
-        title_font.setBold(True)
-        title_font.setPointSize(14)  # Increased from 12
-        title_label.setFont(title_font)
-        title_label.setStyleSheet("color: white;")
-        header_layout.addWidget(title_label)
-        
-        # Metadata
         if hasattr(self.memo, 'creation_date') and self.memo.creation_date:
             date_str = self.memo.creation_date.strftime("%B %d, %Y at %H:%M")
-            date_label = QLabel(f"🗓️ Created: {date_str}")
-            date_label.setStyleSheet("color: #cccccc;")
-            header_layout.addWidget(date_label)
+            info_parts.append(f"Created: {date_str}")
         
         if hasattr(self.memo, 'duration') and self.memo.duration:
             minutes = int(self.memo.duration // 60)
             seconds = int(self.memo.duration % 60)
-            duration_label = QLabel(f"⏱️ Duration: {minutes}:{seconds:02d}")
-            duration_label.setStyleSheet("color: #cccccc;")
-            header_layout.addWidget(duration_label)
+            info_parts.append(f"Duration: {minutes}:{seconds:02d}")
         
-        if hasattr(self.memo, 'detected_language') and self.memo.detected_language:
-            lang_label = QLabel(f"🌍 Language: {self.memo.detected_language}")
-            lang_label.setStyleSheet("color: #cccccc;")
-            header_layout.addWidget(lang_label)
-        
-        layout.addWidget(header_frame)
+        # Create single line label
+        info_text = " - ".join(info_parts)
+        header_label = QLabel(info_text)
+        header_font = QFont()
+        header_font.setBold(True)
+        header_font.setPointSize(14)
+        header_label.setFont(header_font)
+        layout.addWidget(header_label)
         
         # Transcript text area
         self.text_edit = QTextEdit()
