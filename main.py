@@ -54,9 +54,9 @@ class AudioTransLocalApp:
         """Store the audio folder path with security-scoped bookmark"""
         success = self.bookmark_settings.store_folder_path("audio_folder", path)
         if success:
-            print(f"✅ Successfully stored folder path with security-scoped bookmark: {path}")
+            print(f"[SUCCESS] Successfully stored folder path with security-scoped bookmark: {path}")
         else:
-            print(f"⚠️  Stored folder path without security-scoped bookmark: {path}")
+            print(f"[WARNING] Stored folder path without security-scoped bookmark: {path}")
         self.settings.sync()
         
     def show_welcome_dialog(self):
