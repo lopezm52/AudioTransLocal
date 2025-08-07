@@ -52,84 +52,102 @@ class PreferencesWindow(QDialog):
         
         # Folder configuration group
         folder_group = QGroupBox("Audio Files Folder")
-        folder_layout = QFormLayout()
-        folder_layout.setLabelAlignment(Qt.AlignRight)
+        folder_layout = QHBoxLayout()  # Changed to HBoxLayout for better alignment
+        folder_layout.setSpacing(10)
         
-        # Current folder path (read-only)
+        # Current folder label - aligned to middle
+        folder_label = QLabel("Current folder:")
+        folder_label.setAlignment(Qt.AlignVCenter)  # Removed right alignment
+        folder_label.setMinimumWidth(120)  # Fixed width for alignment
+        folder_layout.addWidget(folder_label)
+        
+        # Current folder path (read-only) - double width
         self.folder_path_field = QLineEdit()
         self.folder_path_field.setReadOnly(True)
+        self.folder_path_field.setMinimumWidth(400)  # Double the width
         apply_style(self.folder_path_field, 'input_readonly')
+        folder_layout.addWidget(self.folder_path_field)
         
         # Change folder button
         change_folder_btn = QPushButton("Change...")
+        change_folder_btn.setFixedHeight(32)  # Standard button height
         apply_style(change_folder_btn, 'button_primary')
         change_folder_btn.clicked.connect(self.change_folder)
+        folder_layout.addWidget(change_folder_btn)
         
-        # Layout for folder path and button
-        folder_path_layout = QHBoxLayout()
-        folder_path_layout.addWidget(self.folder_path_field, 3)
-        folder_path_layout.addWidget(change_folder_btn)
-        folder_path_layout.setSpacing(8)
+        folder_layout.addStretch()  # Push everything to the left
         
-        folder_layout.addRow("Current folder:", folder_path_layout)
-        folder_layout.setVerticalSpacing(10)
+        # Add main layout to group
+        folder_group_layout = QVBoxLayout()
+        folder_group_layout.addLayout(folder_layout)
         
         # Add help text
         help_text = QLabel("Select the folder containing your audio files (Voice Memos, recordings, etc.)")
         apply_style(help_text, 'help_text')
         help_text.setWordWrap(True)
-        folder_layout.addRow(help_text)
+        help_text.setContentsMargins(0, 5, 0, 0)  # Removed left margin of 120
+        folder_group_layout.addWidget(help_text)
         
-        folder_group.setLayout(folder_layout)
+        folder_group.setLayout(folder_group_layout)
         general_layout.addWidget(folder_group)
-        general_layout.addSpacing(20)
+        general_layout.addSpacing(10)  # Reduced spacing
         
         # API Configuration group
         api_group = QGroupBox("API Configuration")
-        api_layout = QFormLayout()
-        api_layout.setLabelAlignment(Qt.AlignRight)
+        api_layout = QHBoxLayout()  # Changed to HBoxLayout for better alignment
+        api_layout.setSpacing(10)
         
-        # n8n API Key (secure text field)
+        # n8n API Key label - aligned to middle
+        api_label = QLabel("n8n API Key:")
+        api_label.setAlignment(Qt.AlignVCenter)  # Removed right alignment
+        api_label.setMinimumWidth(120)  # Fixed width for alignment
+        api_layout.addWidget(api_label)
+        
+        # n8n API Key (secure text field) - double width
         self.api_key_field = QLineEdit()
         self.api_key_field.setEchoMode(QLineEdit.Password)
         self.api_key_field.setPlaceholderText("Enter your n8n API key...")
+        self.api_key_field.setMinimumWidth(300)  # Double the width
         apply_style(self.api_key_field, 'input_password')
-        
-        # Save button for API key
-        save_api_key_btn = QPushButton("Save")
-        apply_style(save_api_key_btn, 'button_success')
-        save_api_key_btn.clicked.connect(self.save_api_key)
-        
-        # Clear button for API key
-        clear_api_key_btn = QPushButton("Clear")
-        apply_style(clear_api_key_btn, 'button_danger')
-        clear_api_key_btn.clicked.connect(self.clear_api_key)
+        api_layout.addWidget(self.api_key_field)
         
         # Show/Hide API key button
         self.show_api_key_btn = QPushButton("Show")
+        self.show_api_key_btn.setFixedHeight(32)  # Standard button height
         apply_style(self.show_api_key_btn, 'button_secondary')
         self.show_api_key_btn.clicked.connect(self.toggle_api_key_visibility)
+        api_layout.addWidget(self.show_api_key_btn)
         
-        # Layout for API key field and buttons
-        api_key_layout = QHBoxLayout()
-        api_key_layout.addWidget(self.api_key_field, 3)
-        api_key_layout.addWidget(self.show_api_key_btn)
-        api_key_layout.addWidget(save_api_key_btn)
-        api_key_layout.addWidget(clear_api_key_btn)
-        api_key_layout.setSpacing(8)
+        # Save button for API key
+        save_api_key_btn = QPushButton("Save")
+        save_api_key_btn.setFixedHeight(32)  # Standard button height
+        apply_style(save_api_key_btn, 'button_success')
+        save_api_key_btn.clicked.connect(self.save_api_key)
+        api_layout.addWidget(save_api_key_btn)
         
-        api_layout.addRow("n8n API Key:", api_key_layout)
-        api_layout.setVerticalSpacing(10)
+        # Clear button for API key
+        clear_api_key_btn = QPushButton("Clear")
+        clear_api_key_btn.setFixedHeight(32)  # Standard button height
+        apply_style(clear_api_key_btn, 'button_danger')
+        clear_api_key_btn.clicked.connect(self.clear_api_key)
+        api_layout.addWidget(clear_api_key_btn)
+        
+        api_layout.addStretch()  # Push everything to the left
+        
+        # Add main layout to group
+        api_group_layout = QVBoxLayout()
+        api_group_layout.addLayout(api_layout)
         
         # Add API key help text
         api_help_text = QLabel("Your n8n API key is stored securely in the macOS Keychain")
         apply_style(api_help_text, 'help_text')
         api_help_text.setWordWrap(True)
-        api_layout.addRow(api_help_text)
+        api_help_text.setContentsMargins(0, 5, 0, 0)  # Align with window
+        api_group_layout.addWidget(api_help_text)
         
-        api_group.setLayout(api_layout)
+        api_group.setLayout(api_group_layout)
         general_layout.addWidget(api_group)
-        general_layout.addSpacing(20)
+        general_layout.addSpacing(10)  # Reduced spacing
         
         # Whisper Model Management widget
         self.whisper_model_widget = WhisperModelWidget(self.whisper_model_manager, self)

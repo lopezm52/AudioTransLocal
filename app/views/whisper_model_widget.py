@@ -9,7 +9,7 @@ according to the technical specification.
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
                               QComboBox, QPushButton, QProgressBar, QMessageBox,
                               QGroupBox)
-from PySide6.QtCore import QThreadPool, QRunnable, Signal, QObject, Slot
+from PySide6.QtCore import QThreadPool, QRunnable, Signal, QObject, Slot, Qt
 from typing import Optional
 import logging
 
@@ -61,50 +61,78 @@ class WhisperModelWidget(QWidget):
     def _setup_ui(self):
         """Set up the UI components according to specification"""
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)  # Remove margins for better alignment
         
-        # Create group box for better organization
+        # Create group box for better organization - aligned left
         group_box = QGroupBox("Whisper Model Management")
         group_layout = QVBoxLayout(group_box)
+        group_layout.setSpacing(8)  # Reduced spacing
         
-        # Model selection row
+        # First line: Model selection only - aligned left like other sections
         selection_layout = QHBoxLayout()
-        selection_layout.addWidget(QLabel("Model:"))
+        selection_layout.setSpacing(10)
         
-        # QComboBox for model selection
+        # Model label - aligned to match other sections
+        model_label = QLabel("Model:")
+        model_label.setAlignment(Qt.AlignVCenter)  # Removed right alignment
+        model_label.setMinimumWidth(120)  # Fixed width for alignment with other sections
+        selection_layout.addWidget(model_label)
+        
+        # QComboBox for model selection - wider to accommodate full text
         self.model_combo = QComboBox()
-        self.model_combo.setMinimumWidth(200)
+        self.model_combo.setMinimumWidth(300)  # Wider to show full model names
         selection_layout.addWidget(self.model_combo)
         
-        selection_layout.addStretch()
+        selection_layout.addStretch()  # Push everything to the left
         group_layout.addLayout(selection_layout)
         
-        # Status label
-        self.model_status_label = QLabel("Loading models...")
-        group_layout.addWidget(self.model_status_label)
+        # Second line: Download button + Status (with space between)
+        second_line_layout = QHBoxLayout()
+        second_line_layout.setSpacing(10)
         
-        # Button and progress row
-        button_layout = QHBoxLayout()
+        # Spacer to align with model combo
+        button_spacer = QLabel()  # Spacer to align with model combo
+        button_spacer.setMinimumWidth(130)  # 120 + 10 spacing
+        second_line_layout.addWidget(button_spacer)
         
-        # Download button (stateful)
+        # Download button (stateful) - same height as other buttons
         self.download_button = QPushButton("Download")
         self.download_button.setMinimumWidth(100)
-        button_layout.addWidget(self.download_button)
+        self.download_button.setFixedHeight(32)  # Same height as other buttons
+        second_line_layout.addWidget(self.download_button)
         
-        # Cancel button (hidden by default)
+        # Cancel button (hidden by default) - same height as other buttons
         self.cancel_button = QPushButton("Cancel")
         self.cancel_button.setMinimumWidth(100)
+        self.cancel_button.setFixedHeight(32)  # Same height as other buttons
         self.cancel_button.hide()
-        button_layout.addWidget(self.cancel_button)
+        second_line_layout.addWidget(self.cancel_button)
         
-        button_layout.addStretch()
-        group_layout.addLayout(button_layout)
+        # Add some space between button and status
+        second_line_layout.addSpacing(20)
         
-        # Progress bar (hidden by default)
+        # Status label - aligned with download button
+        self.model_status_label = QLabel("Loading models...")
+        self.model_status_label.setAlignment(Qt.AlignVCenter)
+        second_line_layout.addWidget(self.model_status_label)
+        
+        second_line_layout.addStretch()
+        group_layout.addLayout(second_line_layout)
+        
+        # Progress bar (hidden by default) - aligned with buttons
+        progress_layout = QHBoxLayout()
+        progress_spacer = QLabel()  # Spacer to align with buttons
+        progress_spacer.setMinimumWidth(130)
+        progress_layout.addWidget(progress_spacer)
+        
         self.progress_bar = QProgressBar()
         self.progress_bar.setMinimum(0)
         self.progress_bar.setMaximum(100)
+        self.progress_bar.setMinimumWidth(300)  # Wider progress bar
         self.progress_bar.hide()
-        group_layout.addWidget(self.progress_bar)
+        progress_layout.addWidget(self.progress_bar)
+        progress_layout.addStretch()
+        group_layout.addLayout(progress_layout)
         
         layout.addWidget(group_box)
         layout.addStretch()
@@ -163,7 +191,7 @@ class WhisperModelWidget(QWidget):
         
         if is_downloaded:
             # Model is downloaded: disable button, show "Downloaded"
-            self.download_button.setText("Downloaded")
+            self.download_button.setText("Download")
             self.download_button.setEnabled(False)
             self._hide_progress_controls()
         else:
