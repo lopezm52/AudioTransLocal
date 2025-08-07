@@ -554,17 +554,21 @@ class VoiceMemoView(QWidget):
         
         header_layout.addStretch()
         
-        # Search bar with magnifying glass icon
+        # Search bar with magnifying glass icon - fixed positioning
         search_layout = QHBoxLayout()
         search_layout.setContentsMargins(0, 0, 8, 0)  # Small margin before refresh button
+        search_layout.setSpacing(4)  # Fixed spacing between elements
         
+        # Search icon - fixed position
         search_label = QLabel("🔍")  # Magnifying glass emoji
         search_label.setStyleSheet("QLabel { font-size: 16px; }")
+        search_label.setFixedWidth(20)  # Fixed width for icon
         search_layout.addWidget(search_label)
         
+        # Search field - fixed size to accommodate clear button
         self.search_field = QLineEdit()
         self.search_field.setPlaceholderText("Search voice memos by title, date, or path...")
-        self.search_field.setMaximumWidth(250)  # Slightly wider for better UX
+        self.search_field.setFixedWidth(220)  # Reduced width to make room for clear button
         self.search_field.setStyleSheet("""
             QLineEdit {
                 padding: 6px 12px;
@@ -587,7 +591,7 @@ class VoiceMemoView(QWidget):
         """)
         search_layout.addWidget(self.search_field)
         
-        # Clear search button (only visible when there's text)
+        # Clear search button - fixed position, always reserve space
         self.clear_search_btn = QPushButton("✕")
         self.clear_search_btn.setFixedSize(24, 24)
         self.clear_search_btn.setStyleSheet("""
@@ -605,8 +609,13 @@ class VoiceMemoView(QWidget):
             QPushButton:pressed {
                 background-color: #bbb;
             }
+            QPushButton:disabled {
+                background-color: transparent;
+                color: transparent;
+            }
         """)
-        self.clear_search_btn.setVisible(False)
+        # Start as disabled/invisible but still taking up space
+        self.clear_search_btn.setEnabled(False)
         self.clear_search_btn.clicked.connect(self._clear_search)
         search_layout.addWidget(self.clear_search_btn)
         
@@ -694,7 +703,7 @@ class VoiceMemoView(QWidget):
             self.proxy_model.setFilterRegularExpression(safe_text)
             
             # Show/hide clear button based on whether there's text
-            self.clear_search_btn.setVisible(bool(text.strip()))
+            self.clear_search_btn.setEnabled(bool(text.strip()))
             
             # Update status label with search results
             if text.strip():
