@@ -27,7 +27,6 @@ class MainWindow(QMainWindow):
         
         self.setup_ui()
         self.create_menu_bar()
-        self.connect_transcription_signals()
         
     def setup_ui(self):
         """Setup the main window UI"""
@@ -43,8 +42,8 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         
-        # Add Voice Memo View as the main content
-        self.voice_memo_view = VoiceMemoView()
+        # Add Voice Memo View as the main content (inject transcription service)
+        self.voice_memo_view = VoiceMemoView(transcription_service=self.transcription_service)
         layout.addWidget(self.voice_memo_view)
         
         central_widget.setLayout(layout)

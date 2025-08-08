@@ -35,10 +35,9 @@ from app.services.voice_memo_model import (
     VoiceMemoTableModel, VoiceMemoStateManager, VoiceMemoStatusDelegate,
     VoiceMemoStatus
 )
-from app.workers.transcription_worker import TranscriptionWorker
 from app.views.transcription_delegates import TranscriptionActionsDelegate, TranscriptionStatusDelegate
 from app.views.transcription_dialog import TranscriptionViewDialog
-from app.services.whisper_model_manager import WhisperModelManager
+from app.services.transcription_service import TranscriptionProgress, TranscriptionResult
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -53,8 +52,9 @@ class VoiceMemoFilterProxyModel(QSortFilterProxyModel):
     to maintain separate filtered data structures.
     """
     
-    def __init__(self, parent=None):
+    def __init__(self, transcription_service=None, parent=None):
         super().__init__(parent)
+        self.transcription_service = transcription_service
         self.setFilterCaseSensitivity(Qt.CaseInsensitive)
         self.setFilterKeyColumn(-1)  # Search across all columns - ensures custom filterAcceptsRow is used
     
@@ -495,12 +495,16 @@ class VoiceMemoView(QWidget):
         self.status_delegate = VoiceMemoStatusDelegate(self)
         
         # Initialize transcription components (Epic 3)
-        self.thread_pool = QThreadPool()
+        self.thread_pool = QThreadPool()  # retained in case of future background loaders
         self.actions_delegate = TranscriptionActionsDelegate(self)
         self.transcription_status_delegate = TranscriptionStatusDelegate(self)
         
-        # Initialize model manager for centralized model path management
-        self.model_manager = WhisperModelManager(self)
+        # Transcription now routed via injected TranscriptionService
+        # Connect service signals if provided
+        if self.transcription_service is not None:
+            self.transcription_service.transcription_started.connect(self._on_service_transcription_started)
+            self.transcription_service.transcription_progress_updated.connect(self._on_service_transcription_progress)
+            self.transcription_service.transcription_completed.connect(self._on_service_transcription_completed)
         
         # Connect transcription signals
         self.actions_delegate.transcribe_requested.connect(self._on_transcribe_requested)
@@ -960,39 +964,7 @@ class VoiceMemoView(QWidget):
     # Transcription workflow methods (Epic 3)
     
     def _on_transcribe_requested(self, memo_id: str):
-        """Handle transcription request from Actions column"""
-        # Get current model and validate
-        current_model = self.model_manager.get_current_model()
-        if not current_model:
-            QMessageBox.warning(
-                self,
-                "Whisper Model Error",
-                "No Whisper model selected.\n\nPlease select a model in settings."
-            )
-            return
-            
-        # Check if model is downloaded
-        if not self.model_manager.is_model_downloaded(current_model):
-            QMessageBox.warning(
-                self,
-                "Whisper Model Error", 
-                f"Model '{current_model}' is not downloaded.\n\nPlease download the model first."
-            )
-            return
-        
-        # Get model info for path
-        model_info = self.model_manager.get_model_info(current_model)
-        if not model_info:
-            QMessageBox.warning(
-                self,
-                "Whisper Model Error",
-                f"Invalid model configuration for '{current_model}'."
-            )
-            return
-            
-        model_path = self.model_manager.get_models_directory() / model_info.filename
-        logger.info(f"✅ Using Whisper model: {model_path}")
-        
+        """Handle transcription request from Actions column via central service"""
         # Find the memo
         memo = self._find_memo_by_id(memo_id)
         if not memo:
@@ -1009,24 +981,20 @@ class VoiceMemoView(QWidget):
             return
         
         logger.info(f"🎤 Starting transcription for memo: {memo_id}")
-        
-        # Create and configure transcription worker
-        try:
-            worker = TranscriptionWorker(memo, model_path)
-            
-            # Connect worker signals
-            worker.signals.started.connect(self._on_transcription_started)
-            worker.signals.progress.connect(self._on_transcription_progress)
-            worker.signals.finished.connect(self._on_transcription_finished)
-            worker.signals.error.connect(self._on_transcription_error)
-            
-            # Submit to thread pool
-            self.thread_pool.start(worker)
-            
-        except Exception as e:
-            error_msg = f"Failed to start transcription: {e}"
-            logger.error(f"❌ {error_msg}")
-            QMessageBox.critical(self, "Transcription Error", error_msg)
+        if self.transcription_service is None:
+            QMessageBox.critical(
+                self,
+                "Transcription Unavailable",
+                "Transcription service is not available."
+            )
+            return
+        success = self.transcription_service.start_transcription(str(memo.file_path))
+        if not success:
+            QMessageBox.critical(
+                self,
+                "Transcription Error",
+                "Failed to start transcription. Please ensure a Whisper model is selected and downloaded in Preferences."
+            )
     
     def _on_view_transcription_requested(self, memo_id: str):
         """Handle view transcription request from Actions column"""
@@ -1047,7 +1015,7 @@ class VoiceMemoView(QWidget):
         self._show_transcription_dialog(memo)
     
     def _on_transcription_started(self, memo_id: str):
-        """Handle transcription started signal"""
+        """Handle transcription started signal (legacy worker)"""
         memo = self._find_memo_by_id(memo_id)
         if memo:
             memo.transcription_status = "transcribing"
@@ -1056,7 +1024,7 @@ class VoiceMemoView(QWidget):
             logger.info(f"🔄 Transcription started: {memo_id}")
     
     def _on_transcription_progress(self, memo_id: str, message: str):
-        """Handle transcription progress signal"""
+        """Handle transcription progress signal (legacy worker)"""
         memo = self._find_memo_by_id(memo_id)
         if memo:
             memo.transcription_progress = message
@@ -1064,7 +1032,7 @@ class VoiceMemoView(QWidget):
             logger.info(f"📊 Transcription progress {memo_id}: {message}")
     
     def _on_transcription_finished(self, memo_id: str, file_path: str):
-        """Handle transcription finished signal"""
+        """Handle transcription finished signal (legacy worker)"""
         memo = self._find_memo_by_id(memo_id)
         if memo:
             memo.transcription_status = "transcribed"
@@ -1087,7 +1055,7 @@ class VoiceMemoView(QWidget):
             logger.info(f"✅ Transcription completed: {memo_id} -> {file_path}")
     
     def _on_transcription_error(self, memo_id: str, error_message: str):
-        """Handle transcription error signal with user notification"""
+        """Handle transcription error signal with user notification (legacy worker)"""
         memo = self._find_memo_by_id(memo_id)
         if memo:
             memo.transcription_status = "error"
@@ -1110,6 +1078,63 @@ class VoiceMemoView(QWidget):
             if memo.uuid == memo_id:
                 return memo
         return None
+
+    # New: Map service signals (file_path based) back to memos
+    def _find_memo_by_file_path(self, file_path: str) -> Optional[VoiceMemoModel]:
+        try:
+            for memo in self.table_model._memos:
+                if memo.file_path and str(memo.file_path) == str(file_path):
+                    return memo
+        except Exception:
+            pass
+        return None
+
+    def _on_service_transcription_started(self, file_path: str):
+        memo = self._find_memo_by_file_path(file_path)
+        if memo:
+            memo.transcription_status = "transcribing"
+            memo.transcription_progress = "Starting..."
+            self._refresh_memo_display(memo)
+            logger.info(f"🔄 Transcription started (service): {memo.uuid}")
+
+    def _on_service_transcription_progress(self, file_path: str, progress: TranscriptionProgress):
+        memo = self._find_memo_by_file_path(file_path)
+        if memo:
+            memo.transcription_progress = progress.status
+            self._refresh_memo_display(memo)
+            logger.info(f"📊 Transcription progress (service) {memo.uuid}: {progress.percentage}% - {progress.current_step}")
+
+    def _on_service_transcription_completed(self, file_path: str, result: TranscriptionResult):
+        memo = self._find_memo_by_file_path(file_path)
+        if not memo:
+            return
+        if result.success:
+            # Save transcript to standard location
+            try:
+                transcription_dir = Path.home() / "Library" / "Application Support" / "AudioTransLocal" / "transcriptions"
+                transcription_dir.mkdir(parents=True, exist_ok=True)
+                transcript_path = transcription_dir / f"{memo.uuid}.txt"
+                with open(transcript_path, 'w', encoding='utf-8') as f:
+                    f.write(result.text)
+                memo.transcription_status = "transcribed"
+                memo.transcription_file_path = transcript_path
+                memo.transcription_progress = None
+                memo.transcription_error = None
+                self._refresh_memo_display(memo)
+                # If selected, update detail panel
+                current = self.table_view.selectionModel().currentIndex()
+                if current.isValid():
+                    source_index = self.proxy_model.mapToSource(current)
+                    selected_memo = self.table_model.get_memo_at_row(source_index.row())
+                    if selected_memo and selected_memo.uuid == memo.uuid:
+                        self._load_transcription_in_detail_panel(memo)
+                        from app.services.voice_memo_model import VoiceMemoStatus
+                        self.detail_panel.set_memo(memo, VoiceMemoStatus.TRANSCRIBED)
+                logger.info(f"✅ Transcription completed (service): {memo.uuid} -> {transcript_path}")
+            except Exception as e:
+                self._on_transcription_error(memo.uuid, f"Failed to save transcription: {e}")
+        else:
+            self._on_transcription_error(memo.uuid, result.error_message or "Unknown error")
     
     def _refresh_memo_display(self, memo: VoiceMemoModel):
         """Refresh the display for a specific memo"""

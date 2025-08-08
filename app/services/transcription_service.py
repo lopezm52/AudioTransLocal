@@ -78,12 +78,8 @@ class WhisperTranscriptionWorker(QThread):
             if self.should_stop:
                 return
             
-            # Load the model
-            if os.path.exists(self.model_path):
-                model = whisper.load_model(self.model_path)
-            else:
-                # Fallback to downloading the model
-                model = whisper.load_model(self.model_id)
+            # Load the model by ID (openai-whisper expects model identifiers, not ggml paths)
+            model = whisper.load_model(self.model_id)
             
             # Update progress: Processing audio
             self.progress_updated.emit(TranscriptionProgress(
@@ -155,7 +151,7 @@ class TranscriptionService(QObject):
     
     # Signals
     transcription_started = Signal(str)  # file_path
-    transcription_progress_updated = Signal(TranscriptionProgress)
+    transcription_progress_updated = Signal(str, TranscriptionProgress)  # file_path, progress
     transcription_completed = Signal(str, TranscriptionResult)  # file_path, result
     
     def __init__(self, whisper_model_manager):
@@ -174,7 +170,7 @@ class TranscriptionService(QObject):
             return False
         
         # Get the selected model
-        selected_model_id = self.whisper_model_manager.get_selected_model()
+        selected_model_id = self.whisper_model_manager.get_current_model()
         if not selected_model_id:
             result = TranscriptionResult(
                 success=False,
@@ -194,8 +190,9 @@ class TranscriptionService(QObject):
             self.transcription_completed.emit(audio_file_path, result)
             return False
         
-        # Get model path
-        model_path = self.whisper_model_manager.get_model_path(selected_model_id)
+        # Compute model path for metadata/logging (service uses model ID for loading)
+        model_info = self.whisper_model_manager.get_model_info(selected_model_id)
+        model_path = str(self.whisper_model_manager.get_models_directory() / model_info.filename) if model_info else ""
         
         # Create and start worker
         self.current_worker = WhisperTranscriptionWorker(
@@ -204,8 +201,10 @@ class TranscriptionService(QObject):
             model_id=selected_model_id
         )
         
-        # Connect signals
-        self.current_worker.progress_updated.connect(self.transcription_progress_updated.emit)
+        # Connect signals with file context
+        self.current_worker.progress_updated.connect(
+            lambda progress: self.transcription_progress_updated.emit(audio_file_path, progress)
+        )
         self.current_worker.transcription_completed.connect(
             lambda result: self._on_transcription_completed(audio_file_path, result)
         )
