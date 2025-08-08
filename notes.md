@@ -5,9 +5,11 @@
 # Result: dist/AudioTransLocal-v1.0-macOS.zip (603MB)
 # Ready for distribution!
 
-# Create new Version 1.0 branch
+# Create new Version 1.0 branch ✅ COMMITTED
 git checkout -b "Version-1.0"
-git push -u origin Version-1.0
+git add .
+git commit -m "Version 1.0: Complete macOS app packaging with PyInstaller"
+git push origin version-1.0
 
 git add .
 git commit -m "Whisper ok 1"
