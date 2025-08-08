@@ -52,9 +52,8 @@ class VoiceMemoFilterProxyModel(QSortFilterProxyModel):
     to maintain separate filtered data structures.
     """
     
-    def __init__(self, transcription_service=None, parent=None):
+    def __init__(self, parent=None):
         super().__init__(parent)
-        self.transcription_service = transcription_service
         self.setFilterCaseSensitivity(Qt.CaseInsensitive)
         self.setFilterKeyColumn(-1)  # Search across all columns - ensures custom filterAcceptsRow is used
     
@@ -486,8 +485,9 @@ class VoiceMemoView(QWidget):
     using a QTableView with efficient model/view architecture and filtering.
     """
     
-    def __init__(self, parent=None):
+    def __init__(self, transcription_service=None, parent=None):
         super().__init__(parent)
+        self.transcription_service = transcription_service
         
         # Initialize state management
         self.state_manager = VoiceMemoStateManager(self)
