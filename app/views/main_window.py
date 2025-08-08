@@ -195,7 +195,7 @@ class MainWindow(QMainWindow):
         if not self.audio_folder_path:
             return
         
-        # Check for Voice Memos database
+        # Check for Voice Memos database in the user-selected folder
         folder_path = Path(self.audio_folder_path)
         db_path = folder_path / "CloudRecordings.db"
         
@@ -203,11 +203,9 @@ class MainWindow(QMainWindow):
             print(f"📂 Loading Voice Memos from: {db_path}")
             self.voice_memo_view.load_voice_memos(str(db_path))
         else:
-            # Check if this is the actual Voice Memos folder
-            voice_memos_path = Path.home() / "Library/Group Containers/group.com.apple.VoiceMemos.shared/Recordings"
-            if voice_memos_path.exists() and (voice_memos_path / "CloudRecordings.db").exists():
-                print(f"📂 Loading Voice Memos from system location: {voice_memos_path}")
-                self.voice_memo_view.load_voice_memos(str(voice_memos_path / "CloudRecordings.db"))
+            print(f"❌ CloudRecordings.db not found in: {folder_path}")
+            # Don't try to access system Voice Memos folder automatically in standalone app
+            # The user must explicitly select the folder through preferences
     
     def update_folder_display(self, folder_path):
         """Update the folder display and reload Voice Memos"""

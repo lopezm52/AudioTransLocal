@@ -174,8 +174,8 @@ class PreferencesWindow(QDialog):
         
     def load_settings(self):
         """Load current settings into the UI"""
-        # Load folder path
-        folder_path = self.settings.value("audio_folder_path", "")
+        # Load folder path using security-scoped bookmarks
+        folder_path = self.bookmark_settings.get_folder_path("audio_folder") or ""
         self.folder_path_field.setText(folder_path)
         
         # Load API key from Keychain
@@ -266,10 +266,10 @@ class PreferencesWindow(QDialog):
         
     def change_folder(self):
         """Handle folder change button click with validation"""
-        current_path = self.settings.value("audio_folder_path", "")
+        current_path = self.bookmark_settings.get_folder_path("audio_folder") or ""
         
-        # Get suggested default path
-        voice_memos_path = os.path.expanduser("~/Library/Application Support/com.apple.voicememos/Recordings")
+        # Get suggested default path - use the correct Voice Memos location
+        voice_memos_path = os.path.expanduser("~/Library/Group Containers/group.com.apple.VoiceMemos.shared/Recordings")
         downloads_path = os.path.expanduser("~/Downloads")
         
         # Use current path if exists, otherwise smart defaults
@@ -308,9 +308,11 @@ class PreferencesWindow(QDialog):
                     if reply != QMessageBox.Yes:
                         return  # User chose not to continue
                 
-                # Update settings with validated path
+                # Update settings with validated path using security-scoped bookmarks
                 validated_path = validation_result.data['folder_path']
-                self.settings.setValue("audio_folder_path", validated_path)
+                success = self.bookmark_settings.store_folder_path("audio_folder", validated_path)
+                if not success:
+                    print(f"Warning: Failed to create security-scoped bookmark for {validated_path}")
                 self.settings.sync()
                 
                 # Update UI
